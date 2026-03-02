@@ -17,12 +17,26 @@ git clone https://github.com/LordeSid-04/experiment-dlweek.git
 cd experiment-dlweek
 ```
 
+### Judge Quick Start (No OpenAI key required)
+
+The backend automatically falls back to a built-in harness when `OPENAI_API_KEY` is not set, so judges can run the full product flow without entering secrets.
+
+```bash
+copy backend\.env.example backend\.env
+npm run setup
+npm run dev
+```
+
+Then open `http://localhost:3000/auth`.
+
+### Full setup (with optional OpenAI key)
+
 Backend:
 
 ```bash
 cd backend
 copy .env.example .env
-# set OPENAI_API_KEY in .env
+# optional: set OPENAI_API_KEY in .env for live model output
 npm install
 npm test
 npm start
@@ -459,7 +473,7 @@ Ledger file: `backend/data/evidence-ledger.jsonl`
 ```bash
 cd backend
 copy .env.example .env
-# add OPENAI_API_KEY in .env
+# optional: add OPENAI_API_KEY in .env
 npm install
 npm test
 npm start
