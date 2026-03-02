@@ -2,7 +2,7 @@
 
 CodexGo is a governed AI engineering workspace for planning, generating, validating, and reviewing software changes with explicit policy controls.
 
-It combines multi-agent orchestration, security scanning, risk scoring, human approvals, and append-only evidence logging in a single developer workflow.
+It combines multi-agent orchestration, security scanning, risk scoring, human approvals, and append-only evidence logging in a single developer workflow. Here is the link to the application (deployed via Vercel): https://experiment-dlweek.vercel.app
 
 ---
 
