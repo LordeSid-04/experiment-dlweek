@@ -423,7 +423,7 @@ export default function Home() {
                     />
                   </div>
                   <div className="mt-3 flex items-center justify-between text-xs text-white/70">
-                    <span>0-29</span>
+                    <span>0</span>
                     <span>50</span>
                     <span>100</span>
                   </div>
