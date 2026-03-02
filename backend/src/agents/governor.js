@@ -3,6 +3,14 @@ const { computeRiskAssessment } = require("../lib/risk-engine");
 const { decideGate } = require("../lib/policy-engine");
 const { callCodex } = require("../lib/codex-client");
 
+function buildDeterministicSummary({ gateDecision, riskTier, riskScore, findings }) {
+  const topFinding = findings[0];
+  if (!topFinding) {
+    return `Gate ${gateDecision} at ${riskTier} risk (${riskScore}/100). No scanner findings detected.`;
+  }
+  return `Gate ${gateDecision} at ${riskTier} risk (${riskScore}/100). Top finding: ${topFinding.title}.`;
+}
+
 async function runGovernorAgent({
   stageName,
   actor,
@@ -39,18 +47,38 @@ async function runGovernorAgent({
     breakGlass,
   });
 
-  const codex = await callCodex({
-    agentRole: "GOVERNOR",
-    systemPrompt:
-      "You are GOVERNOR. Return strict JSON with fields: stageName, riskScore, gateDecision, summary.",
-    userPrompt: `Stage: ${stageName}\nActor: ${actor}\nRisk score: ${riskScore}\nRisk tier: ${
-      assessment.riskTier
-    }\nGate: ${gate.gateDecision}\nFindings: ${JSON.stringify(
-      findings,
-      null,
-      2
-    )}\nConfidence mode: ${confidenceMode}`,
-  });
+  const useModelSummary = String(process.env.GOVERNOR_USE_MODEL_SUMMARY || "").toLowerCase() === "true";
+  const codex = useModelSummary
+    ? await callCodex({
+        agentRole: "GOVERNOR",
+        systemPrompt:
+          "You are GOVERNOR. Return strict JSON with fields: stageName, riskScore, gateDecision, summary.",
+        userPrompt: `Stage: ${stageName}\nActor: ${actor}\nRisk score: ${riskScore}\nRisk tier: ${
+          assessment.riskTier
+        }\nGate: ${gate.gateDecision}\nFindings: ${JSON.stringify(
+          findings,
+          null,
+          2
+        )}\nConfidence mode: ${confidenceMode}`,
+      })
+    : {
+        parsed: {
+          summary: buildDeterministicSummary({
+            gateDecision: gate.gateDecision,
+            riskTier: assessment.riskTier,
+            riskScore,
+            findings,
+          }),
+        },
+        text: "",
+        proof: {
+          provider: "codex-harness",
+          model: "policy-engine-summary",
+          responseId: `governor-${stageName}-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          agentRole: "GOVERNOR",
+        },
+      };
 
   return {
     artifact: {

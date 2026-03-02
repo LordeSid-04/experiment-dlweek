@@ -109,6 +109,26 @@ function mapFindings(findings) {
   }));
 }
 
+function hasUsableProjectScaffold(artifact) {
+  const generatedFiles =
+    artifact?.generatedFiles && typeof artifact.generatedFiles === "object"
+      ? artifact.generatedFiles
+      : {};
+  const keys = Object.keys(generatedFiles);
+  if (!keys.length) {
+    return false;
+  }
+  const hasPrimaryEntry =
+    Boolean(generatedFiles["src/app/page.tsx"]) ||
+    Boolean(generatedFiles["index.html"]) ||
+    Boolean(generatedFiles["preview/index.html"]);
+  const hasSupportingStructure =
+    Boolean(generatedFiles["src/app/layout.tsx"]) ||
+    Boolean(generatedFiles["src/app/globals.css"]) ||
+    Boolean(generatedFiles["src/styles.css"]);
+  return hasPrimaryEntry && hasSupportingStructure;
+}
+
 function summarizeArchitectArtifact(artifact) {
   const components = (artifact.systemComponents || []).slice(0, 3).join(", ");
   const fileCount = Array.isArray(artifact.filesToTouch) ? artifact.filesToTouch.length : 0;
@@ -287,7 +307,7 @@ async function executePipeline({
     developer.artifact.generatedFiles && typeof developer.artifact.generatedFiles === "object"
       ? Object.keys(developer.artifact.generatedFiles).length
       : 0;
-  if (isBuildPrompt && generatedFilesCount < 5) {
+  if (isBuildPrompt && generatedFilesCount < 3 && !hasUsableProjectScaffold(developer.artifact)) {
     const continuation = await runDeveloperAgent({
       userRequest: `${prompt}\n\nContinue implementation to fully satisfy this request. Add missing files and complete project structure.`,
       planArtifact: architect.artifact,
@@ -413,18 +433,31 @@ async function executePipeline({
     return blockedResult;
   }
 
-  const verifier = await runVerifierAgent({
-    userRequest: prompt,
-    diffArtifact: developer.artifact,
-  });
-  artifacts.test = verifier.artifact;
-  proofs.push({ step: "verifier", proof: verifier.proof });
   emit({
     type: "stage_started",
     agentRole: "VERIFIER",
     stage: "test",
     message: "Preparing tests and validation checks...",
   });
+  emit({
+    type: "stage_started",
+    agentRole: "OPERATOR",
+    stage: "ops",
+    message: "Drafting rollout and rollback plan...",
+  });
+
+  const verifierPromise = runVerifierAgent({
+    userRequest: prompt,
+    diffArtifact: developer.artifact,
+  });
+  const operatorPromise = runOperatorAgent({
+    userRequest: prompt,
+    diffArtifact: developer.artifact,
+  });
+
+  const verifier = await verifierPromise;
+  artifacts.test = verifier.artifact;
+  proofs.push({ step: "verifier", proof: verifier.proof });
   emit({
     type: "agent_output",
     agentRole: "VERIFIER",
@@ -478,18 +511,9 @@ async function executePipeline({
   });
   emitControlRequirements(emit, govAfterTest.artifact);
 
-  const operator = await runOperatorAgent({
-    userRequest: prompt,
-    diffArtifact: developer.artifact,
-  });
+  const operator = await operatorPromise;
   artifacts.ops = operator.artifact;
   proofs.push({ step: "operator", proof: operator.proof });
-  emit({
-    type: "stage_started",
-    agentRole: "OPERATOR",
-    stage: "ops",
-    message: "Drafting rollout and rollback plan...",
-  });
   emit({
     type: "agent_output",
     agentRole: "OPERATOR",

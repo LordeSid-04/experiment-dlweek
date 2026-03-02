@@ -49,6 +49,17 @@ test("extracts company names for branding relevance checks", () => {
   );
 });
 
+test("extracts explicit brand names exactly as written", () => {
+  assert.equal(
+    __test.extractExplicitBrandName('build a website. event name is "MNB cOnTiNuE 2026".'),
+    "MNB cOnTiNuE 2026"
+  );
+  assert.equal(
+    __test.extractExplicitBrandName("create a site called DevSprint LIVE"),
+    "DevSprint LIVE"
+  );
+});
+
 test("flags low quality build artifacts", () => {
   const lowQuality = __test.isLowQualityBuildArtifact("build a company website for MNB", {
     assistantReply: "Built a website.",
@@ -89,6 +100,22 @@ test("requires company name grounding when provided in prompt", () => {
     },
   });
   assert.equal(drifted, false);
+});
+
+test("requires exact brand casing match when explicitly provided", () => {
+  const prompt = 'Build a website. company name is "MnB Continue".';
+  const exact = __test.hasExactBrandMatch(prompt, {
+    generatedFiles: {
+      "src/app/page.tsx": "export default function Page(){return <h1>MnB Continue</h1>;}",
+    },
+  });
+  const mismatched = __test.hasExactBrandMatch(prompt, {
+    generatedFiles: {
+      "src/app/page.tsx": "export default function Page(){return <h1>MNB CONTINUE</h1>;}",
+    },
+  });
+  assert.equal(exact, true);
+  assert.equal(mismatched, false);
 });
 
 test("detects company website prompts", () => {
@@ -163,6 +190,44 @@ test("premium fallback builder returns intent-specific files", () => {
   const appFiles = __test.buildPremiumFilesByIntent("Build a task planner app", "app");
   assert.ok(appFiles["src/app/page.tsx"]);
   assert.ok(appFiles["src/app/globals.css"]);
+});
+
+test("premium website fallback includes richer trust and testimonial sections", () => {
+  const websiteFiles = __test.buildPremiumFilesByIntent(
+    'build me a company website. company name is "MNB Continue".',
+    "website"
+  );
+  const pageSource = websiteFiles["src/app/page.tsx"] || "";
+  assert.ok(pageSource.includes("What clients say"));
+  assert.ok(pageSource.includes("trustSignals"));
+  assert.ok(pageSource.includes("testimonials"));
+});
+
+test("website brief captures focus, audience, and requested sections", () => {
+  const brief = __test.buildWebsiteBrief(
+    "Build a fintech company website for enterprise teams with pricing, faq, and blog."
+  );
+  assert.equal(brief.focus, "financial services");
+  assert.equal(brief.audience, "business teams");
+  assert.equal(brief.sections.includes("pricing"), true);
+  assert.equal(brief.sections.includes("faq"), true);
+  assert.equal(brief.sections.includes("blog-preview"), true);
+});
+
+test("requested website section coverage is enforced", () => {
+  const prompt = "Build a company website with pricing and faq sections";
+  const covered = __test.hasRequestedWebsiteSectionCoverage(prompt, {
+    generatedFiles: {
+      "src/app/page.tsx": "services about contact pricing faq",
+    },
+  });
+  const missing = __test.hasRequestedWebsiteSectionCoverage(prompt, {
+    generatedFiles: {
+      "src/app/page.tsx": "services about contact only",
+    },
+  });
+  assert.equal(covered, true);
+  assert.equal(missing, false);
 });
 
 test("autopilot quality gate requires stronger quality for website prompts", () => {

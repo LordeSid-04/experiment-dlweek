@@ -139,8 +139,8 @@ Teams want AI-assisted speed without losing control over:
   3. DEVELOPER (diff/files/preview)
   4. GOVERNOR (after-diff)
   5. VERIFIER (tests/checks)
-  6. GOVERNOR (after-test)
-  7. OPERATOR (rollout + rollback)
+  6. OPERATOR (rollout + rollback; can run concurrently with verifier flow to reduce latency)
+  7. GOVERNOR (after-test)
   8. GOVERNOR (final gate)
 - `scanners.js` detects risky patterns (secrets, SQL danger, auth bypass, token logging, trust/policy drift).
 - `risk-engine.js` computes explainable score from:
@@ -364,6 +364,8 @@ The confidence slider controls permissions and Gate Decision strictness.
 - High Risk Tier requires Approval.
 - Critical Risk Tier is blocked unless Break-glass override is supplied.
 - Build prompts in autopilot now use multi-pass quality refinement (prompt-grounding + intent scoring) and deterministic premium fallbacks for `website`, `chatbot`, `dashboard`, and general `app` intents to keep output quality high even in fallback/no-key mode.
+- The website fallback now includes a prompt-to-structure compiler that infers domain focus, audience, CTA intent, and requested sections (`pricing`, `faq`, `blog`) to generate more prompt-specific output quality.
+- Governor summary generation is deterministic by default to reduce model round-trip time; set `GOVERNOR_USE_MODEL_SUMMARY=true` to use model-generated governor summaries.
 
 ## Backend Architecture
 

@@ -103,6 +103,37 @@ function toPromptKeywords(prompt) {
   return Array.from(new Set(tokens.filter((token) => token.length >= 3)));
 }
 
+function extractExplicitBrandName(prompt) {
+  const text = String(prompt || "");
+  if (!text.trim()) return "";
+  const sanitize = (value) =>
+    String(value || "")
+      .replace(/\r/g, " ")
+      .replace(/\n/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim()
+      .replace(/^["']|["']$/g, "");
+  const patterns = [
+    /company(?:'s|\sis)?\s+name\s+(?:is|=|:)\s*["']([^"']+)["']/i,
+    /company(?:'s|\sis)?\s+name\s+(?:is|=|:)\s*([^\n.,;]{2,80})/i,
+    /event(?:'s|\sis)?\s+name\s+(?:is|=|:)\s*["']([^"']+)["']/i,
+    /event(?:'s|\sis)?\s+name\s+(?:is|=|:)\s*([^\n.,;]{2,80})/i,
+    /(?:company|event|product|project|brand)\s*(?:name)?\s*(?:is|=|:)\s*["']([^"']+)["']/i,
+    /(?:company|event|product|project|brand)\s*(?:name)?\s*(?:is|=|:)\s*([^\n.,;]{2,80})/i,
+    /(?:called|named)\s*["']([^"']+)["']/i,
+    /(?:called|named)\s+([^\n.,;]{2,80})/i,
+    /for\s+["']([^"']+)["']\s+(?:company|event|brand|site|website)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return sanitize(match[1]);
+    }
+  }
+  const quoted = text.match(/["']([^"']{2,80})["']/);
+  return sanitize(quoted?.[1] || "");
+}
+
 function buildPromptGroundingTerms(prompt) {
   const keywords = toPromptKeywords(prompt);
   const domainTerms = keywords.filter((word) => !GENERIC_BUILD_TERMS.has(word));
@@ -126,6 +157,29 @@ function flattenArtifactText(artifact) {
     chunks.push(String(content).slice(0, 5000));
   }
   return chunks.join("\n").toLowerCase();
+}
+
+function flattenArtifactRawText(artifact) {
+  const generatedFiles = artifact?.generatedFiles && typeof artifact.generatedFiles === "object"
+    ? artifact.generatedFiles
+    : {};
+  const chunks = [
+    String(artifact?.assistantReply || ""),
+    String(artifact?.rationale || ""),
+    String(artifact?.previewHtml || ""),
+  ];
+  for (const [path, content] of Object.entries(generatedFiles)) {
+    chunks.push(path);
+    chunks.push(String(content).slice(0, 5000));
+  }
+  return chunks.join("\n");
+}
+
+function hasExactBrandMatch(prompt, artifact) {
+  const explicitBrand = extractExplicitBrandName(prompt);
+  if (!explicitBrand) return true;
+  const rawText = flattenArtifactRawText(artifact);
+  return rawText.includes(explicitBrand);
 }
 
 function isArtifactGroundedToPrompt(prompt, artifact) {
@@ -155,6 +209,8 @@ function hasUnexpectedPortfolioTemplate(prompt, artifact) {
 }
 
 function extractCompanyName(prompt) {
+  const explicitBrand = extractExplicitBrandName(prompt);
+  if (explicitBrand) return explicitBrand;
   const sanitizeCompanyName = (value) => {
     const cleaned = String(value || "")
       .replace(/\r/g, " ")
@@ -187,8 +243,66 @@ function extractCompanyName(prompt) {
   return sanitizeCompanyName(quoted?.[1]);
 }
 
+function inferWebsiteFocus(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  if (/(fintech|finance|bank|payments?|wealth|accounting)/i.test(text)) return "financial services";
+  if (/(health|medical|clinic|hospital|pharma|wellness)/i.test(text)) return "healthcare";
+  if (/(real estate|property|realtor|mortgage)/i.test(text)) return "real estate";
+  if (/(logistics|supply chain|shipping|fleet)/i.test(text)) return "logistics";
+  if (/(legal|law firm|compliance|attorney)/i.test(text)) return "legal services";
+  if (/(education|edtech|training|academy|course)/i.test(text)) return "education";
+  if (/(saas|software|ai|automation|platform)/i.test(text)) return "software";
+  return "business";
+}
+
+function inferWebsiteAudience(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  if (/(enterprise|b2b|buyers|decision makers|teams)/i.test(text)) return "business teams";
+  if (/(consumers|customers|individuals|users)/i.test(text)) return "end customers";
+  if (/(startup|founder|small business|smb)/i.test(text)) return "growing teams";
+  return "modern teams";
+}
+
+function inferWebsitePrimaryGoal(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  if (/(book|consultation|appointment|demo call)/i.test(text)) return "book qualified calls";
+  if (/(signup|trial|get started|register)/i.test(text)) return "convert signups";
+  if (/(lead|pipeline|inquiries|contact form)/i.test(text)) return "capture qualified leads";
+  return "earn trust and drive conversion";
+}
+
+function inferWebsitePrimaryCta(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  if (/(appointment|consultation)/i.test(text)) return "Book Consultation";
+  if (/(demo)/i.test(text)) return "Book a Demo";
+  if (/(trial|get started|signup|register)/i.test(text)) return "Get Started";
+  return "Book a Call";
+}
+
+function inferWebsiteTrustSignals(focus) {
+  if (focus === "financial services") {
+    return [
+      { label: "Regulated markets served", value: "12" },
+      { label: "Client retention", value: "95%" },
+      { label: "Avg. onboarding time", value: "18 days" },
+    ];
+  }
+  if (focus === "healthcare") {
+    return [
+      { label: "Care teams supported", value: "90+" },
+      { label: "SLA adherence", value: "99.2%" },
+      { label: "Avg. launch time", value: "5.1 weeks" },
+    ];
+  }
+  return [
+    { label: "Projects delivered", value: "140+" },
+    { label: "Client retention", value: "96%" },
+    { label: "Average launch time", value: "4.2 weeks" },
+  ];
+}
+
 function buildWebsiteBrief(prompt) {
-  const companyName = extractCompanyName(prompt);
+  const companyName = extractExplicitBrandName(prompt) || extractCompanyName(prompt);
   const lower = String(prompt || "").toLowerCase();
   const sections = ["hero", "about", "services", "contact"];
   if (/(pricing|plans?)/i.test(lower)) sections.push("pricing");
@@ -198,12 +312,16 @@ function buildWebsiteBrief(prompt) {
   return {
     companyName,
     sections,
+    focus: inferWebsiteFocus(prompt),
+    audience: inferWebsiteAudience(prompt),
+    primaryGoal: inferWebsitePrimaryGoal(prompt),
+    primaryCta: inferWebsitePrimaryCta(prompt),
     tone: "professional, credible, conversion-oriented",
   };
 }
 
 function deriveBrandLabel(prompt) {
-  const explicitCompany = extractCompanyName(prompt);
+  const explicitCompany = extractExplicitBrandName(prompt) || extractCompanyName(prompt);
   if (explicitCompany) {
     return explicitCompany;
   }
@@ -220,62 +338,156 @@ function deriveBrandLabel(prompt) {
   return "Generated Product";
 }
 
-function inferCompanyTagline(companyName) {
+function inferCompanyTagline(companyName, websiteBrief) {
   if (!companyName) {
     return "Built for trust, designed for growth";
   }
-  return `${companyName} helps teams move faster with confidence`;
+  return `${companyName} helps ${websiteBrief.audience} move faster with confidence in ${websiteBrief.focus}`;
 }
 
-function inferServiceCards(companyName) {
+function inferServiceCards(companyName, websiteBrief) {
   const brand = companyName || "Your Company";
+  const focus = websiteBrief?.focus || "business";
   return [
     {
       title: "Advisory",
-      text: `${brand} provides strategic guidance that turns goals into clear execution plans.`,
+      text: `${brand} provides strategic guidance for ${focus} teams, turning goals into clear execution plans.`,
     },
     {
       title: "Delivery",
-      text: "Cross-functional teams ship reliable solutions with measurable outcomes and clear milestones.",
+      text: "Cross-functional teams ship reliable solutions with measurable outcomes, milestones, and clear ownership.",
     },
     {
       title: "Optimization",
-      text: "Continuous improvement based on metrics, user feedback, and operational signals.",
+      text: "Continuous improvement driven by metrics, user feedback, and operational signals after launch.",
     },
   ];
 }
 
 function buildPremiumCompanyWebsiteFiles(prompt, companyName) {
+  const websiteBrief = buildWebsiteBrief(prompt);
   const brand = companyName || deriveBrandLabel(prompt);
-  const tagline = inferCompanyTagline(brand);
-  const serviceCards = inferServiceCards(brand);
+  const tagline = inferCompanyTagline(brand, websiteBrief);
+  const serviceCards = inferServiceCards(brand, websiteBrief);
+  const trustSignals = inferWebsiteTrustSignals(websiteBrief.focus);
   const servicesJson = JSON.stringify(serviceCards, null, 2);
+  const trustSignalsJson = JSON.stringify(trustSignals, null, 2);
+  const includePricing = websiteBrief.sections.includes("pricing");
+  const includeFaq = websiteBrief.sections.includes("faq");
+  const includeBlogPreview = websiteBrief.sections.includes("blog-preview");
+  const pricingSection = includePricing
+    ? `
+      <section id="pricing" className="section">
+        <h2>Pricing</h2>
+        <p className="sectionSubtitle">Simple packages for different stages of growth.</p>
+        <div className="grid3">
+          <article className="panel">
+            <h3>Starter</h3>
+            <p>For teams validating execution strategy.</p>
+            <p className="price">$2,500 / month</p>
+          </article>
+          <article className="panel">
+            <h3>Growth</h3>
+            <p>For teams scaling delivery and systems.</p>
+            <p className="price">$6,000 / month</p>
+          </article>
+          <article className="panel">
+            <h3>Enterprise</h3>
+            <p>For larger programs requiring tailored operating models.</p>
+            <p className="price">Custom</p>
+          </article>
+        </div>
+      </section>`
+    : "";
+  const faqSection = includeFaq
+    ? `
+      <section id="faq" className="section">
+        <h2>FAQ</h2>
+        <div className="grid2">
+          <article className="panel"><h3>How quickly can we start?</h3><p>Most engagements start within 7-10 business days.</p></article>
+          <article className="panel"><h3>Do you work with existing teams?</h3><p>Yes. We integrate with in-house product, design, and engineering teams.</p></article>
+        </div>
+      </section>`
+    : "";
+  const blogPreviewSection = includeBlogPreview
+    ? `
+      <section id="insights" className="section">
+        <h2>Insights</h2>
+        <div className="grid2">
+          <article className="panel"><h3>How ${websiteBrief.focus} teams de-risk delivery</h3><p>Practical patterns for faster execution with stronger quality controls.</p></article>
+          <article className="panel"><h3>What high-performing teams measure weekly</h3><p>A lightweight operating cadence that keeps priorities and outcomes aligned.</p></article>
+        </div>
+      </section>`
+    : "";
   const homepage = `import Link from "next/link";
 
 const services = ${servicesJson};
+const trustSignals = ${trustSignalsJson};
+
+const testimonials = [
+  {
+    quote:
+      "${brand} gave us a clear roadmap and shipped exactly what our team needed without surprises.",
+    name: "Head of Product, Northline",
+  },
+  {
+    quote:
+      "The delivery process felt structured, transparent, and fast from kickoff to release.",
+    name: "Operations Lead, Meridian Labs",
+  },
+];
 
 export default function HomePage() {
   return (
     <main className="page">
+      <div className="ambientGlow" aria-hidden />
       <header className="hero">
         <nav className="nav">
           <div className="brand">${brand}</div>
           <div className="navLinks">
             <a href="#services">Services</a>
             <a href="#about">About</a>
+            <a href="#testimonials">Testimonials</a>
             <a href="#contact">Contact</a>
           </div>
-          <Link href="#contact" className="ctaSecondary">Book a Call</Link>
+          <Link href="#contact" className="ctaSecondary">${websiteBrief.primaryCta}</Link>
         </nav>
-        <div className="heroContent">
-          <p className="eyebrow">Company Website</p>
-          <h1>Welcome to ${brand}</h1>
-          <p className="subtitle">${tagline}</p>
+
+        <div className="heroGrid">
+          <div>
+            <p className="eyebrow">Company Website</p>
+            <h1>${brand}</h1>
+            <p className="subtitle">${tagline}</p>
+            <div className="ctaRow">
+              <a href="#services" className="ctaPrimary">Explore Services</a>
+              <a href="#about" className="ctaGhost">See our approach</a>
+            </div>
+          </div>
+          <aside className="heroCard">
+            <p className="heroCardLabel">Why teams choose ${brand}</p>
+            <ul>
+              <li>Clear delivery milestones and weekly visibility</li>
+              <li>Risk-aware execution with measurable outcomes</li>
+              <li>Senior-level strategy and hands-on implementation</li>
+            </ul>
+          </aside>
         </div>
       </header>
 
+      <section className="stats">
+        {trustSignals.map((item) => (
+          <article key={item.label} className="statCard">
+            <p className="statValue">{item.value}</p>
+            <p className="statLabel">{item.label}</p>
+          </article>
+        ))}
+      </section>
+
       <section id="services" className="section">
         <h2>Services</h2>
+        <p className="sectionSubtitle">
+          Practical expertise across strategy, delivery, and optimization for ${websiteBrief.focus}.
+        </p>
         <div className="grid3">
           {services.map((service) => (
             <article key={service.title} className="panel">
@@ -286,31 +498,66 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section id="about" className="section">
+      <section id="about" className="section split">
         <article className="panel">
           <h2>About ${brand}</h2>
-          <p>${brand} partners with teams to deliver reliable product outcomes with clear execution plans.</p>
+          <p>
+            ${brand} combines business context with execution rigor. We partner with ${websiteBrief.audience} to ship
+            reliable experiences, improve core workflows, and create momentum that compounds.
+          </p>
+          <p>
+            Our delivery model keeps priorities visible, decisions documented, and quality standards
+            high from planning to rollout.
+          </p>
+        </article>
+        <article className="panel">
+          <h3>How we work</h3>
+          <ul className="checkList">
+            <li>Discovery and scope alignment in week 1</li>
+            <li>Incremental delivery with stakeholder demos</li>
+            <li>Measurement, tuning, and operational handoff</li>
+          </ul>
         </article>
       </section>
 
+      <section id="testimonials" className="section">
+        <h2>What clients say</h2>
+        <div className="grid2">
+          {testimonials.map((item) => (
+            <article key={item.name} className="panel quoteCard">
+              <p className="quote">"{item.quote}"</p>
+              <p className="quoteBy">{item.name}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+      ${pricingSection}
+      ${faqSection}
+      ${blogPreviewSection}
+
       <section id="contact" className="section">
-        <article className="panel">
-          <h2>Contact</h2>
-          <p>Start your next initiative with ${brand}.</p>
+        <article className="panel contactCard">
+          <div>
+            <h2>Contact ${brand}</h2>
+            <p>Tell us your goals and timeline. We will propose a practical plan to ${websiteBrief.primaryGoal} within two business days.</p>
+          </div>
+          <a href="mailto:hello@${brand.toLowerCase().replace(/[^a-z0-9]+/g, "")}.com" className="ctaPrimary">
+            hello@${brand.toLowerCase().replace(/[^a-z0-9]+/g, "")}.com
+          </a>
         </article>
       </section>
     </main>
   );
 }
 `;
-  const globals = `:root{--bg:#06070b;--card:#0e1220;--line:rgba(255,255,255,.12);--text:#f5f7ff;--muted:#b8bfd8}*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif}.page{width:min(1100px,92vw);margin:0 auto;padding:24px 0 56px}.heroContent{margin-top:18px}.nav{display:flex;justify-content:space-between;gap:12px;border:1px solid var(--line);padding:12px;border-radius:12px}.brand{font-weight:700}.navLinks{display:flex;gap:12px;color:var(--muted)}.section{margin-top:28px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.panel{border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--card)}.eyebrow{text-transform:uppercase;font-size:12px;letter-spacing:.11em;color:var(--muted)}.subtitle{color:var(--muted)}.ctaSecondary{border:1px solid var(--line);border-radius:999px;padding:8px 12px}@media(max-width:840px){.grid3{grid-template-columns:1fr}.nav{flex-wrap:wrap}}`;
+  const globals = `:root{--bg:#070a13;--surface:#111a2f;--surfaceAlt:#0d1528;--line:rgba(255,255,255,.14);--text:#f6f8ff;--muted:#b4bfdc;--accent:#8e7bff;--accentSoft:#bfaeff}*{box-sizing:border-box}html,body{margin:0;padding:0;background:radial-gradient(circle at 20% 0%,#141f3a 0%,#070a13 42%);color:var(--text);font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif}.page{position:relative;width:min(1140px,92vw);margin:0 auto;padding:26px 0 64px}.ambientGlow{position:absolute;right:-120px;top:-80px;width:320px;height:320px;background:radial-gradient(circle,rgba(142,123,255,.28),rgba(142,123,255,0));filter:blur(8px);pointer-events:none}.hero{position:relative;z-index:1}.nav{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid var(--line);padding:12px;border-radius:14px;background:rgba(10,14,28,.65);backdrop-filter:blur(4px)}.brand{font-weight:700;letter-spacing:.01em}.navLinks{display:flex;gap:12px;flex-wrap:wrap}.navLinks a{color:var(--muted);text-decoration:none}.navLinks a:hover{color:var(--text)}.heroGrid{margin-top:22px;display:grid;grid-template-columns:1.4fr .9fr;gap:14px;align-items:stretch}.heroCard{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.02));padding:16px}.heroCardLabel{font-size:12px;text-transform:uppercase;letter-spacing:.11em;color:var(--muted)}.heroCard ul{margin:10px 0 0;padding-left:18px;color:var(--muted);display:grid;gap:8px}.eyebrow{text-transform:uppercase;font-size:12px;letter-spacing:.11em;color:var(--muted)}h1{margin:10px 0 0;font-size:clamp(36px,6vw,62px);line-height:1.02}.subtitle{margin-top:12px;max-width:64ch;color:var(--muted);font-size:clamp(16px,2vw,19px)}.ctaRow{margin-top:18px;display:flex;flex-wrap:wrap;gap:10px}.ctaPrimary,.ctaGhost,.ctaSecondary{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:10px 14px;text-decoration:none;font-weight:600}.ctaPrimary{background:linear-gradient(90deg,var(--accent),var(--accentSoft));color:#0d1020}.ctaGhost,.ctaSecondary{border:1px solid var(--line);color:var(--text);background:rgba(255,255,255,.02)}.section{margin-top:30px}.section h2{margin:0 0 10px;font-size:30px}.sectionSubtitle{margin:0;color:var(--muted)}.stats{margin-top:16px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.statCard{border:1px solid var(--line);border-radius:14px;background:var(--surfaceAlt);padding:14px}.statValue{margin:0;font-size:24px;font-weight:700}.statLabel{margin:6px 0 0;color:var(--muted)}.grid3{margin-top:12px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.panel{border:1px solid var(--line);border-radius:16px;padding:16px;background:var(--surface)}.panel h3{margin-top:0}.panel p{color:var(--muted)}.split{display:grid;grid-template-columns:1.3fr .9fr;gap:12px}.checkList{margin:10px 0 0;padding-left:18px;color:var(--muted);display:grid;gap:8px}.quoteCard .quote{font-size:17px;line-height:1.6;color:#e9edff}.quoteBy{margin-top:12px;font-size:13px;color:var(--muted)}.price{font-size:20px;font-weight:700;color:var(--text)}.contactCard{display:flex;justify-content:space-between;align-items:center;gap:14px}@media(max-width:980px){.heroGrid,.split{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.grid3{grid-template-columns:repeat(2,minmax(0,1fr))}.contactCard{flex-direction:column;align-items:flex-start}}@media(max-width:680px){.stats,.grid3,.grid2{grid-template-columns:1fr}.nav{align-items:flex-start;flex-direction:column}.navLinks{width:100%}}`;
   const layout = `import "./globals.css";
 export const metadata = { title: "${brand} | Company Website", description: "${brand} company website generated from prompt intent." };
 export default function RootLayout({ children }) {
   return <html lang="en"><body>{children}</body></html>;
 }
 `;
-  const preview = `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>${brand} | Company Website</title><style>${globals}</style></head><body><main class="page"><header><nav class="nav"><div class="brand">${brand}</div><div class="navLinks"><a href="#services">Services</a><a href="#about">About</a><a href="#contact">Contact</a></div><a class="ctaSecondary" href="#contact">Book a Call</a></nav><div class="heroContent"><p class="eyebrow">Company Website</p><h1>Welcome to ${brand}</h1><p class="subtitle">${tagline}</p></div></header><section id="services" class="section"><h2>Services</h2></section><section id="about" class="section"><h2>About ${brand}</h2></section><section id="contact" class="section"><h2>Contact</h2></section></main></body></html>`;
+  const preview = `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>${brand} | Company Website</title><style>${globals}</style></head><body><main class="page"><div class="ambientGlow"></div><header class="hero"><nav class="nav"><div class="brand">${brand}</div><div class="navLinks"><a href="#services">Services</a><a href="#about">About</a><a href="#testimonials">Testimonials</a><a href="#contact">Contact</a></div><a class="ctaSecondary" href="#contact">${websiteBrief.primaryCta}</a></nav><div class="heroGrid"><div><p class="eyebrow">Company Website</p><h1>${brand}</h1><p class="subtitle">${tagline}</p><div class="ctaRow"><a class="ctaPrimary" href="#services">Explore Services</a><a class="ctaGhost" href="#about">See our approach</a></div></div><aside class="heroCard"><p class="heroCardLabel">Why teams choose ${brand}</p><ul><li>Clear delivery milestones and weekly visibility</li><li>Risk-aware execution with measurable outcomes</li><li>Senior-level strategy and hands-on implementation</li></ul></aside></div></header><section class="stats"><article class="statCard"><p class="statValue">${trustSignals[0].value}</p><p class="statLabel">${trustSignals[0].label}</p></article><article class="statCard"><p class="statValue">${trustSignals[1].value}</p><p class="statLabel">${trustSignals[1].label}</p></article><article class="statCard"><p class="statValue">${trustSignals[2].value}</p><p class="statLabel">${trustSignals[2].label}</p></article></section><section id="services" class="section"><h2>Services</h2></section><section id="about" class="section"><h2>About ${brand}</h2></section><section id="testimonials" class="section"><h2>What clients say</h2></section>${includePricing ? `<section id="pricing" class="section"><h2>Pricing</h2></section>` : ""}${includeFaq ? `<section id="faq" class="section"><h2>FAQ</h2></section>` : ""}${includeBlogPreview ? `<section id="insights" class="section"><h2>Insights</h2></section>` : ""}<section id="contact" class="section"><h2>Contact ${brand}</h2></section></main></body></html>`;
   return {
     "src/app/layout.tsx": layout,
     "src/app/page.tsx": homepage,
@@ -524,11 +771,29 @@ function buildPremiumFilesByIntent(prompt, intent) {
   return buildPremiumAppFiles(prompt);
 }
 
+function hasRequestedWebsiteSectionCoverage(prompt, artifact) {
+  const brief = buildWebsiteBrief(prompt);
+  const text = flattenArtifactText(artifact);
+  const requestedOptionalSections = brief.sections.filter(
+    (section) => section === "pricing" || section === "faq" || section === "blog-preview"
+  );
+  if (!requestedOptionalSections.length) {
+    return true;
+  }
+  return requestedOptionalSections.every((section) => {
+    if (section === "pricing") return text.includes("pricing");
+    if (section === "faq") return text.includes("faq");
+    return text.includes("insights") || text.includes("blog");
+  });
+}
+
 function isHighQualityAutopilotArtifact(prompt, artifact, intent) {
   const grounded = isArtifactGroundedToPrompt(prompt, artifact) && !hasUnexpectedPortfolioTemplate(prompt, artifact);
   if (!grounded) return false;
+  if (!hasExactBrandMatch(prompt, artifact)) return false;
+  if (intent === "website" && !hasRequestedWebsiteSectionCoverage(prompt, artifact)) return false;
   const score = scoreArtifactQualityByIntent(prompt, artifact, intent);
-  if (intent === "website") return score >= 80;
+  if (intent === "website") return score >= 85;
   return score >= 75;
 }
 
@@ -560,6 +825,7 @@ function scoreWebsiteArtifactQuality(prompt, artifact) {
   const generatedFiles = artifact?.generatedFiles && typeof artifact.generatedFiles === "object"
     ? artifact.generatedFiles
     : {};
+  const brief = buildWebsiteBrief(prompt);
   let score = 0;
   if (Object.keys(generatedFiles).length >= 4) score += 25;
   if (text.includes("services")) score += 10;
@@ -567,6 +833,10 @@ function scoreWebsiteArtifactQuality(prompt, artifact) {
   if (text.includes("contact")) score += 10;
   if (text.includes("testimonials")) score += 10;
   if (text.includes("hero")) score += 10;
+  if (text.includes(brief.focus.toLowerCase())) score += 10;
+  if (brief.sections.includes("pricing") && text.includes("pricing")) score += 5;
+  if (brief.sections.includes("faq") && text.includes("faq")) score += 5;
+  if (brief.sections.includes("blog-preview") && (text.includes("insights") || text.includes("blog"))) score += 5;
   if (!hasUnexpectedPortfolioTemplate(prompt, artifact)) score += 10;
   const companyName = extractCompanyName(prompt);
   if (companyName && text.includes(companyName.toLowerCase())) score += 15;
@@ -592,11 +862,10 @@ function isLowQualityBuildArtifact(prompt, artifact) {
 }
 
 function isCompanyPromptGrounded(prompt, artifact) {
-  const companyName = extractCompanyName(prompt);
+  const companyName = extractExplicitBrandName(prompt) || extractCompanyName(prompt);
   if (!companyName) return true;
-  const combined = flattenArtifactText(artifact);
-  const normalizedCompany = companyName.toLowerCase();
-  return combined.includes(normalizedCompany);
+  const combined = flattenArtifactRawText(artifact);
+  return combined.includes(companyName);
 }
 
 function buildPreviewFromGeneratedFiles(generatedFiles, prompt) {
@@ -721,6 +990,7 @@ async function runDeveloperAgent({
       hasUnexpectedPortfolioTemplate(userRequest, normalizedArtifact) ||
       isLowQualityBuildArtifact(userRequest, normalizedArtifact) ||
       !isCompanyPromptGrounded(userRequest, normalizedArtifact) ||
+      !hasExactBrandMatch(userRequest, normalizedArtifact) ||
       (autopilotBuildMode && !isHighQualityAutopilotArtifact(userRequest, normalizedArtifact, buildIntent));
 
     if (!qualityGateFailed) {
@@ -747,6 +1017,7 @@ async function runDeveloperAgent({
       hasUnexpectedPortfolioTemplate(userRequest, normalizedArtifact) ||
       isLowQualityBuildArtifact(userRequest, normalizedArtifact) ||
       !isCompanyPromptGrounded(userRequest, normalizedArtifact) ||
+      !hasExactBrandMatch(userRequest, normalizedArtifact) ||
       (autopilotBuildMode && !isHighQualityAutopilotArtifact(userRequest, normalizedArtifact, buildIntent)));
 
   if (stillLowQualityAfterRefinement && autopilotBuildMode) {
@@ -807,12 +1078,16 @@ module.exports = {
     toPromptKeywords,
     isArtifactGroundedToPrompt,
     extractCompanyName,
+    extractExplicitBrandName,
     isLowQualityBuildArtifact,
     isCompanyPromptGrounded,
+    hasExactBrandMatch,
     isCompanyWebsitePrompt,
     detectBuildIntent,
     scoreWebsiteArtifactQuality,
     scoreArtifactQualityByIntent,
+    buildWebsiteBrief,
+    hasRequestedWebsiteSectionCoverage,
     deriveBrandLabel,
     buildPremiumFilesByIntent,
     isHighQualityAutopilotArtifact,
