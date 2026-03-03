@@ -24,6 +24,7 @@ type BackendUrlRuntime = {
   configuredUrl?: string;
   protocol?: string;
   hostname?: string;
+  origin?: string;
 };
 
 export function isNtuStudentEmail(email: string): boolean {
@@ -53,18 +54,32 @@ export function resolveBackendBaseUrl(runtime?: BackendUrlRuntime): string {
   if (configuredUrl) {
     return configuredUrl.replace(/\/+$/, "");
   }
-  const protocol =
-    runtime?.protocol ?? (typeof window !== "undefined" ? window.location.protocol : "http:");
+
+  const protocol = runtime?.protocol ?? (typeof window !== "undefined" ? window.location.protocol : "http:");
   const hostname = runtime?.hostname ?? (typeof window !== "undefined" ? window.location.hostname : "");
-  if (hostname && hostname !== "localhost" && hostname !== "127.0.0.1") {
+  const origin = runtime?.origin ?? (typeof window !== "undefined" ? window.location.origin : "");
+  const normalizedHostname = hostname.toLowerCase();
+  const isLoopback = normalizedHostname === "localhost" || normalizedHostname === "127.0.0.1";
+  const isPrivateIpv4 =
+    /^10\./.test(normalizedHostname) ||
+    /^192\.168\./.test(normalizedHostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(normalizedHostname);
+
+  if (isLoopback) {
+    return "http://localhost:4000";
+  }
+  if (isPrivateIpv4) {
     return `${protocol}//${hostname}:4000`;
+  }
+  if (origin) {
+    return origin.replace(/\/+$/, "");
   }
   return "http://localhost:4000";
 }
 
 function networkErrorMessage(action: "signup" | "login", baseUrl: string): string {
   const actionLabel = action === "signup" ? "Sign up" : "Login";
-  return `${actionLabel} could not reach the backend at ${baseUrl}. If you are on another device, set NEXT_PUBLIC_BACKEND_URL to a reachable backend URL (for example your host machine LAN IP).`;
+  return `${actionLabel} could not reach the backend at ${baseUrl}. Set NEXT_PUBLIC_BACKEND_URL to a reachable backend URL (LAN IP for local testing, or your deployed backend API URL).`;
 }
 
 export async function signup(payload: SignupPayload): Promise<AuthUser> {

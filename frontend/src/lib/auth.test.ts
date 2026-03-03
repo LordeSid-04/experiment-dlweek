@@ -49,6 +49,16 @@ describe("auth validators", () => {
     ).toBe("http://192.168.1.10:4000");
   });
 
+  it("uses same origin for public hosted domains by default", () => {
+    expect(
+      resolveBackendBaseUrl({
+        hostname: "experiment-dlweek.vercel.app",
+        protocol: "https:",
+        origin: "https://experiment-dlweek.vercel.app",
+      })
+    ).toBe("https://experiment-dlweek.vercel.app");
+  });
+
   it("falls back to localhost on local development host", () => {
     expect(
       resolveBackendBaseUrl({
