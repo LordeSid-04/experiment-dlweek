@@ -7,6 +7,13 @@ test("detects build prompts for crm requests", () => {
   assert.equal(__test.isBuildPrompt("explain this code"), false);
 });
 
+test("does not misclassify code-fix prompt containing created_at as build request", () => {
+  assert.equal(
+    __test.isBuildPrompt("Fix all faulty functions in this file with created_at parsing issues."),
+    false
+  );
+});
+
 test("flags artifact not grounded to crm prompt", () => {
   const grounded = __test.isArtifactGroundedToPrompt("build a CRM website", {
     assistantReply: "Built a CRM website with customer records and pipeline views.",
@@ -398,4 +405,24 @@ test("infers inline target path from filename comment", () => {
 test("extracts code from fenced model output", () => {
   const code = __test.extractCodeFromModelText("Here is the patch:\n```python\ndef main():\n    return 1\n```");
   assert.match(code, /def main/);
+});
+
+test("deterministic inline python fallback patches common faulty functions", () => {
+  const source = [
+    "import json",
+    "def load_users(path, cache=[]):",
+    "    with open(path, \"r\") as f:",
+    "        data = json.load(f)",
+    "    cache.extend(data)",
+    "    return cache",
+    "",
+    "def aggregate_totals(processed_orders):",
+    "    totals = {}",
+    "    for user_id, amount in processed_orders:",
+    "        totals[user_id] += amount",
+    "    return totals",
+  ].join("\n");
+  const patched = __test.buildInlinePythonBestEffortPatch("Fix all faulty functions", source);
+  assert.match(patched, /cache=None/);
+  assert.match(patched, /totals\.get\(user_id, 0\.0\)/);
 });
