@@ -72,7 +72,7 @@ async function runGovernorAgent({
         },
         text: "",
         proof: {
-          provider: "codex-harness",
+          provider: "policy-engine",
           model: "policy-engine-summary",
           responseId: `governor-${stageName}-${Date.now()}`,
           timestamp: new Date().toISOString(),

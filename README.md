@@ -235,6 +235,7 @@ Open:
 - `SUPABASE_AUTH_TABLE` (default: `users`)
 
 If `OPENAI_API_KEY` is unset, the backend uses a deterministic harness fallback for continuity.
+After changing `OPENAI_API_KEY` in `backend/.env`, restart the backend process so the new key is loaded.
 
 Auth storage behavior:
 

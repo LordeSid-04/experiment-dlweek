@@ -3,7 +3,7 @@
  * @typedef {"assist"|"pair"|"autopilot"} ConfidenceMode
  *
  * @typedef {Object} CodexProof
- * @property {"openai-api"|"codex-harness"} provider
+ * @property {"openai-api"|"codex-harness"|"policy-engine"} provider
  * @property {string} model
  * @property {string} responseId
  * @property {string} timestamp

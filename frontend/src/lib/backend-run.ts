@@ -4,7 +4,7 @@ import type { MockRunResult } from "@/lib/mockRun";
 export interface CodexProofRecord {
   step: string;
   proof: {
-    provider: "openai-api" | "codex-harness";
+    provider: "openai-api" | "codex-harness" | "policy-engine";
     model: string;
     responseId: string;
     timestamp: string;
