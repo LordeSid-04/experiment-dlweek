@@ -11,6 +11,94 @@ function extractJsonObject(text) {
   }
 }
 
+const RELEVANCE_STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "that",
+  "this",
+  "from",
+  "your",
+  "you",
+  "are",
+  "is",
+  "was",
+  "were",
+  "can",
+  "could",
+  "would",
+  "should",
+  "what",
+  "when",
+  "where",
+  "which",
+  "why",
+  "how",
+  "about",
+  "into",
+  "over",
+  "under",
+  "then",
+  "than",
+  "just",
+  "have",
+  "has",
+  "had",
+  "any",
+  "all",
+  "not",
+  "but",
+  "our",
+  "their",
+  "they",
+  "them",
+  "its",
+  "it's",
+  "it's",
+  "please",
+  "help",
+  "explain",
+  "fix",
+  "code",
+  "function",
+  "issue",
+  "error",
+  "problem",
+]);
+
+function tokenizeForRelevance(text) {
+  return String(text || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((token) => token.length >= 3 && !RELEVANCE_STOPWORDS.has(token));
+}
+
+function hasRelevanceOverlap(question, suggestion, rationale) {
+  const qTokens = Array.from(new Set(tokenizeForRelevance(question)));
+  if (!qTokens.length) return true;
+  const answerText = `${suggestion || ""}\n${rationale || ""}`.toLowerCase();
+  const overlap = qTokens.filter((token) => answerText.includes(token));
+  const minOverlap = qTokens.length >= 5 ? 2 : 1;
+  return overlap.length >= minOverlap;
+}
+
+function buildClarifyingFallback(payload) {
+  const question = String(payload.question || "").trim();
+  const snippet = buildSnippet(payload) || "No relevant code snippet found.";
+  return {
+    suggestion: [
+      "I want to keep this accurate, but I need one more detail before giving a definitive answer.",
+      "Share the specific expected result, actual result, and context (topic/system/input).",
+      "Then I can give a targeted, high-confidence fix or explanation.",
+    ].join(" "),
+    rationale: question
+      ? `The current prompt is broad, so a precise correction needs concrete context.`
+      : "No concrete question text was provided.",
+    relevantSnippet: snippet,
+  };
+}
+
 function buildSnippet(payload) {
   const selected = (payload.selectedCode || "").trim();
   const content = (payload.fileContent || "").trim();
@@ -153,6 +241,28 @@ function fallbackSuggestion(payload) {
   };
 }
 
+function normalizeModelSuggestion(parsed, payload) {
+  const fallback = fallbackSuggestion(payload);
+  const suggestion = typeof parsed?.suggestion === "string" ? parsed.suggestion.trim() : "";
+  const rationale = typeof parsed?.rationale === "string" ? parsed.rationale.trim() : "";
+  const relevantSnippet =
+    typeof parsed?.relevantSnippet === "string" && parsed.relevantSnippet.trim()
+      ? parsed.relevantSnippet.trim()
+      : fallback.relevantSnippet;
+
+  if (!suggestion) {
+    return fallback;
+  }
+  if (!hasRelevanceOverlap(payload.question || "", suggestion, rationale)) {
+    return buildClarifyingFallback(payload);
+  }
+  return {
+    suggestion,
+    rationale: rationale || fallback.rationale,
+    relevantSnippet,
+  };
+}
+
 async function getQuickAssistSuggestion(payload) {
   const heuristic = buildHeuristicSuggestion(payload);
   if (heuristic) {
@@ -166,9 +276,12 @@ async function getQuickAssistSuggestion(payload) {
 
   const model = process.env.OPENAI_FAST_MODEL || "gpt-4o-mini";
   const systemPrompt = [
-    "You are a fast coding assistant for an in-browser editor.",
+    "You are a fast assistant for code and general knowledge questions.",
+    "Goal: maximize correctness and relevance for the user's exact question.",
+    "If confidence is limited, explicitly say what is uncertain and what to verify next.",
+    "Do not invent facts, citations, measurements, or sources.",
     "Return concise, friendly, human-readable help.",
-    "Prioritize direct fixes and practical next steps.",
+    "Prioritize direct fixes, practical next steps, and verification guidance.",
     "Respond as strict JSON with keys: suggestion, rationale, relevantSnippet.",
     "Do not include markdown fences.",
   ].join(" ");
@@ -236,19 +349,7 @@ async function getQuickAssistSuggestion(payload) {
       }
       return fallback;
     }
-    const fallback = fallbackSuggestion(payload);
-    return {
-      suggestion:
-        typeof parsed.suggestion === "string"
-          ? parsed.suggestion
-          : fallback.suggestion,
-      rationale:
-        typeof parsed.rationale === "string" ? parsed.rationale : fallback.rationale,
-      relevantSnippet:
-        typeof parsed.relevantSnippet === "string"
-          ? parsed.relevantSnippet
-          : fallback.relevantSnippet,
-    };
+    return normalizeModelSuggestion(parsed, payload);
   } catch {
     return fallbackSuggestion(payload);
   } finally {

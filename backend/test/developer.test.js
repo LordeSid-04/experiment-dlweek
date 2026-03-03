@@ -282,3 +282,35 @@ test("detects and fixes inverted even-check logic for non-build prompts", () => 
   assert.match(mismatch.matchedLine, /% 2 == 1/);
   assert.match(mismatch.fixLine, /% 2 == 0/);
 });
+
+test("detects general knowledge prompts without code context", () => {
+  assert.equal(
+    __test.looksLikeGeneralKnowledgePrompt("Explain what quantum entanglement means in simple words", {}),
+    true
+  );
+  assert.equal(
+    __test.looksLikeGeneralKnowledgePrompt("fix this function: return x * 2", {}),
+    false
+  );
+});
+
+test("knowledge artifact normalization rejects low-relevance answers", () => {
+  const lowRelevance = __test.normalizeKnowledgeArtifact(
+    {
+      assistantReply: "Use flexbox and media queries for responsive layouts.",
+      rationale: "General frontend guidance.",
+    },
+    "How does photosynthesis work in plants?"
+  );
+  assert.match(lowRelevance.assistantReply, /need one extra detail/i);
+
+  const relevant = __test.normalizeKnowledgeArtifact(
+    {
+      assistantReply:
+        "Photosynthesis converts light energy into chemical energy in chloroplasts using carbon dioxide and water.",
+      rationale: "This directly answers the biological process in plants.",
+    },
+    "How does photosynthesis work in plants?"
+  );
+  assert.match(relevant.assistantReply, /photosynthesis/i);
+});

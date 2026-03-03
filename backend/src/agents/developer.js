@@ -116,6 +116,102 @@ function buildLogicalMismatchDeveloperArtifact(prompt, currentFiles = {}) {
   };
 }
 
+const KNOWLEDGE_STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "this",
+  "that",
+  "from",
+  "your",
+  "you",
+  "are",
+  "was",
+  "were",
+  "can",
+  "could",
+  "would",
+  "should",
+  "what",
+  "when",
+  "where",
+  "which",
+  "why",
+  "how",
+  "into",
+  "about",
+  "please",
+  "help",
+  "explain",
+]);
+
+function tokenizeKnowledgeText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((token) => token.length >= 3 && !KNOWLEDGE_STOPWORDS.has(token));
+}
+
+function hasKnowledgeReplyRelevance(prompt, assistantReply, rationale) {
+  const promptTokens = Array.from(new Set(tokenizeKnowledgeText(prompt)));
+  if (!promptTokens.length) return true;
+  const responseText = `${assistantReply || ""}\n${rationale || ""}`.toLowerCase();
+  const overlap = promptTokens.filter((token) => responseText.includes(token));
+  const minOverlap = promptTokens.length >= 6 ? 2 : 1;
+  return overlap.length >= minOverlap;
+}
+
+function looksLikeGeneralKnowledgePrompt(prompt, currentFiles = {}) {
+  const text = String(prompt || "").trim();
+  if (!text) return false;
+  const hasProjectFiles = Object.keys(currentFiles || {}).length > 0;
+  const hasCodeBlock = /```[\s\S]*```/.test(text);
+  const hasCodeSyntax =
+    /\b(def|class|function|return|import|const|let|var|if|for|while|try|catch)\b/.test(text) ||
+    /[{}();]/.test(text) ||
+    /\b\w+\.(js|ts|tsx|py|java|go|rs|cpp|c|cs)\b/.test(text);
+  const asksToBuildOrEdit = /\b(build|create|generate|write|implement|refactor|fix|patch|update|edit)\b/i.test(text);
+  return !hasProjectFiles && !hasCodeBlock && !hasCodeSyntax && !asksToBuildOrEdit;
+}
+
+function buildKnowledgeFallbackArtifact(prompt) {
+  return {
+    unifiedDiff: "",
+    filesTouched: [],
+    rationale:
+      "A safer fallback was used to avoid overconfident or weakly grounded claims without enough specific context.",
+    generatedFiles: {},
+    previewHtml: "",
+    assistantReply: [
+      "I can help with this topic accurately, but I need one extra detail to avoid assumptions.",
+      "Share the exact context and what you want (definition, comparison, steps, troubleshooting, etc.).",
+      "I will then provide a direct, logically structured answer with clear verification checks.",
+    ].join(" "),
+  };
+}
+
+function normalizeKnowledgeArtifact(raw, prompt) {
+  const assistantReply = toString(raw?.assistantReply, "").trim();
+  const rationale = toString(raw?.rationale, "").trim();
+  if (!assistantReply) {
+    return buildKnowledgeFallbackArtifact(prompt);
+  }
+  if (!hasKnowledgeReplyRelevance(prompt, assistantReply, rationale)) {
+    return buildKnowledgeFallbackArtifact(prompt);
+  }
+  return {
+    unifiedDiff: "",
+    filesTouched: [],
+    rationale:
+      rationale ||
+      "Provided a relevance-checked domain response with explicit uncertainty handling where needed.",
+    generatedFiles: {},
+    previewHtml: "",
+    assistantReply,
+  };
+}
+
 function isCompanyWebsitePrompt(prompt) {
   const text = String(prompt || "").toLowerCase();
   return text.includes("company") && (text.includes("website") || text.includes("web app") || text.includes("site"));
@@ -1049,6 +1145,40 @@ async function runDeveloperAgent({
         modelText: JSON.stringify({ rule: "logical-mismatch-fix" }),
       };
     }
+    if (looksLikeGeneralKnowledgePrompt(userRequest, currentFiles)) {
+      const knowledgeSystemPrompt = [
+        "You are DEVELOPER in a governed multi-agent pipeline.",
+        "The user asked a general knowledge question (not a build/code patch request).",
+        "Respond with high correctness, clear logic, and direct relevance to the exact question.",
+        "Do not invent facts, references, datasets, or certainty.",
+        "If uncertainty exists, state it explicitly and provide a practical way to verify.",
+        "Return strict JSON only with keys: assistantReply, rationale.",
+      ].join(" ");
+      const knowledgeUserPrompt = `Question:\n${userRequest}\n\nReturn a concise but complete answer and keep it tightly scoped to the question intent.`;
+      let knowledgeCodex = await callCodex({
+        agentRole: "DEVELOPER",
+        systemPrompt: knowledgeSystemPrompt,
+        userPrompt: knowledgeUserPrompt,
+      });
+      let knowledgeArtifact = normalizeKnowledgeArtifact(knowledgeCodex.parsed || {}, userRequest);
+
+      let pass = 0;
+      while (pass < 2 && knowledgeArtifact.assistantReply === buildKnowledgeFallbackArtifact(userRequest).assistantReply) {
+        knowledgeCodex = await callCodex({
+          agentRole: "DEVELOPER",
+          systemPrompt: knowledgeSystemPrompt,
+          userPrompt: `${knowledgeUserPrompt}\n\nRefinement: increase relevance to user wording and keep factual claims conservative unless highly certain.`,
+        });
+        knowledgeArtifact = normalizeKnowledgeArtifact(knowledgeCodex.parsed || {}, userRequest);
+        pass += 1;
+      }
+
+      return {
+        artifact: knowledgeArtifact,
+        proof: knowledgeCodex.proof,
+        modelText: knowledgeCodex.text,
+      };
+    }
   }
   const autopilotBuildMode = confidenceMode === "autopilot" && buildMode;
   const buildIntent = detectBuildIntent(userRequest);
@@ -1207,5 +1337,8 @@ module.exports = {
     detectLogicalMismatchInSources,
     applyLogicalFixToContent,
     buildLogicalMismatchDeveloperArtifact,
+    looksLikeGeneralKnowledgePrompt,
+    hasKnowledgeReplyRelevance,
+    normalizeKnowledgeArtifact,
   },
 };

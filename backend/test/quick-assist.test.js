@@ -35,3 +35,17 @@ test("quick assist detects inverted even-check logic", async () => {
   assert.match(result.suggestion, /inverted/i);
   assert.match(result.suggestion, /% 2 == 0/);
 });
+
+test("quick assist fallback asks for concrete context when broad", async () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    const result = await getQuickAssistSuggestion({
+      question: "Can you explain this issue?",
+    });
+    assert.match(result.suggestion, /expected behavior/i);
+    assert.match(result.suggestion, /actual output/i);
+  } finally {
+    process.env.OPENAI_API_KEY = originalKey;
+  }
+});
