@@ -5,7 +5,7 @@ loadEnvFile();
 const { runPipeline, streamPipeline } = require("./orchestrator");
 const { readLedgerEvents } = require("./lib/evidence-ledger");
 const { appendLedgerEvent, buildLedgerEvent } = require("./lib/evidence-ledger");
-const { createUser, loginUser } = require("./lib/auth-store");
+const { createUser, loginUser, getStorageResource } = require("./lib/auth-store");
 const { listProjects, upsertProject } = require("./lib/project-store");
 const { getQuickAssistSuggestion } = require("./lib/quick-assist");
 
@@ -135,7 +135,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && pathname === "/api/auth/signup") {
     try {
       const body = await readBody(req);
-      const result = createUser({
+      const result = await createUser({
         firstName: body.firstName,
         lastName: body.lastName,
         email: body.email,
@@ -150,7 +150,7 @@ const server = http.createServer(async (req, res) => {
       appendAuthLedgerEvent({
         actionType: "auth-signup",
         actor: result.user.email,
-        resourcesTouched: ["backend/data/users.json"],
+        resourcesTouched: [getStorageResource()],
       });
       sendJson(res, 201, { user: result.user });
       return;
@@ -163,7 +163,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && pathname === "/api/auth/login") {
     try {
       const body = await readBody(req);
-      const result = loginUser({ email: body.email, password: body.password });
+      const result = await loginUser({ email: body.email, password: body.password });
       if (!result.ok) {
         sendJson(res, 401, { error: result.error });
         return;
@@ -172,7 +172,7 @@ const server = http.createServer(async (req, res) => {
       appendAuthLedgerEvent({
         actionType: "auth-login",
         actor: result.user.email,
-        resourcesTouched: ["backend/data/users.json"],
+        resourcesTouched: [getStorageResource()],
       });
       sendJson(res, 200, {
         user: result.user,

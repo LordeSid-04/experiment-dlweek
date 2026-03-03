@@ -229,8 +229,27 @@ Open:
 - `OPENAI_TIMEOUT_MS`
 - `GOVERNOR_USE_MODEL_SUMMARY` (`false` by default for lower latency)
 - `BACKEND_PORT` (default: `4000`)
+- `SUPABASE_URL` (optional; enables Supabase auth store)
+- `SUPABASE_SERVICE_ROLE_KEY` (optional; required with `SUPABASE_URL`)
+- `SUPABASE_AUTH_TABLE` (default: `users`)
 
 If `OPENAI_API_KEY` is unset, the backend uses a deterministic harness fallback for continuity.
+
+Auth storage behavior:
+
+- If `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, signup/login uses Supabase.
+- Otherwise, backend falls back to `backend/data/users.json`.
+
+Supabase auth table should include these columns:
+
+- `id` (uuid/text primary key)
+- `first_name` (text)
+- `last_name` (text)
+- `email` (text, unique)
+- `mobile_number` (text)
+- `password_salt` (text)
+- `password_digest` (text)
+- `created_at` (timestamp/text)
 
 ---
 
