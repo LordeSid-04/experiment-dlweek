@@ -25,13 +25,3 @@ Use this file as a quick verifier summary. Detailed write-up is in root `Evaluat
 4. **Frontend reliability**
    - governance/UI helper logic validated
    - backend-run integration parsing validated
-
-## Suggested screenshot set
-
-Capture:
-
-- backend focused run output
-- backend full run output
-- frontend full run output
-- workspace risk card + gate decision
-- `/api/ledger/events` hash-link fields
