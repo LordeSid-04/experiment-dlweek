@@ -6,7 +6,6 @@ import { Check, Code2, Copy, Eye, FileDiff, Logs, MessageSquareText, PanelBottom
 import type { GovernanceMode, GovernancePermission, PermissionState } from "@/lib/governance";
 import {
   fetchApprovalHistory,
-  fetchQuickAssistSuggestion,
   runGovernedPipeline,
   streamGovernedPipeline,
   type ApprovalHistoryEntry,
@@ -29,7 +28,6 @@ import {
 import { inferCodeLanguage } from "@/lib/syntax";
 import {
   buildAssistCompanionPrompt,
-  buildQuickAssistResponse,
   isCompanionOnlyConfidence,
 } from "@/lib/assist-companion";
 import type { RunCodeResult } from "@/lib/code-runner";
@@ -126,6 +124,50 @@ function toDisplayRiskLabel(riskTier?: "LOW" | "MED" | "HIGH" | "CRITICAL"): "LO
   return "HIGH";
 }
 
+function renderInlineRiskText(
+  text: string,
+  flags: Array<{
+    start: number;
+    end: number;
+    severity: "LOW" | "MED" | "HIGH" | "CRITICAL";
+    title: string;
+    ruleName: string;
+  }>
+) {
+  const safeText = String(text || "");
+  if (!flags.length) return safeText;
+  const sorted = [...flags]
+    .filter((item) => item.start >= 0 && item.end > item.start && item.end <= safeText.length)
+    .sort((a, b) => a.start - b.start);
+  if (!sorted.length) return safeText;
+  const nodes: Array<string | JSX.Element> = [];
+  let cursor = 0;
+  sorted.forEach((flag, index) => {
+    if (flag.start < cursor) return;
+    if (flag.start > cursor) nodes.push(safeText.slice(cursor, flag.start));
+    const tint =
+      flag.severity === "LOW"
+        ? "bg-emerald-300/20 text-emerald-100"
+        : flag.severity === "MED"
+          ? "bg-amber-300/20 text-amber-100"
+          : flag.severity === "HIGH"
+            ? "bg-orange-300/25 text-orange-100"
+            : "bg-rose-300/25 text-rose-100";
+    nodes.push(
+      <span
+        key={`${flag.title}-${flag.start}-${flag.end}-${index}`}
+        title={`${flag.title} (${flag.ruleName})`}
+        className={`rounded px-0.5 ${tint}`}
+      >
+        {safeText.slice(flag.start, flag.end)}
+      </span>
+    );
+    cursor = flag.end;
+  });
+  if (cursor < safeText.length) nodes.push(safeText.slice(cursor));
+  return nodes;
+}
+
 export function AIPanel({
   mode,
   confidencePercent,
@@ -165,10 +207,10 @@ export function AIPanel({
   const [selectedCodeSnippet, setSelectedCodeSnippet] = useState("");
   const [editorRunResult, setEditorRunResult] = useState<RunCodeResult | null>(null);
   const [pairPendingFiles, setPairPendingFiles] = useState<Record<string, string>>({});
-  const [pairRiskLabel, setPairRiskLabel] = useState<"LOW" | "MEDIUM" | "HIGH" | null>(null);
-  const [pairRiskScore, setPairRiskScore] = useState<number | null>(null);
-  const [pairRiskExpanded, setPairRiskExpanded] = useState(false);
-  const [pairRiskDetails, setPairRiskDetails] = useState<{
+  const [runRiskLabel, setRunRiskLabel] = useState<"LOW" | "MEDIUM" | "HIGH" | null>(null);
+  const [runRiskScore, setRunRiskScore] = useState<number | null>(null);
+  const [runRiskExpanded, setRunRiskExpanded] = useState(false);
+  const [runRiskDetails, setRunRiskDetails] = useState<{
     topDrivers: string[];
     reasonCodes: string[];
     requiredControls: string[];
@@ -192,6 +234,15 @@ export function AIPanel({
     streamLines: string[];
     highlightedSnippet: string;
     matchedTerms: string[];
+    contentFlags: Array<{
+      target: "assistantReply" | "rationale";
+      start: number;
+      end: number;
+      severity: "LOW" | "MED" | "HIGH" | "CRITICAL";
+      title: string;
+      ruleName: string;
+      evidence: string;
+    }>;
   }>({
     promptText: "",
     assistantReply: "",
@@ -200,6 +251,7 @@ export function AIPanel({
     streamLines: [],
     highlightedSnippet: "",
     matchedTerms: [],
+    contentFlags: [],
   });
   const [selectedAgentRole, setSelectedAgentRole] = useState<string>("");
   const [approvalModal, setApprovalModal] = useState<{
@@ -379,12 +431,13 @@ export function AIPanel({
       streamLines: [],
       highlightedSnippet: "",
       matchedTerms: [],
+      contentFlags: [],
     });
     setPairPendingFiles({});
-    setPairRiskLabel(null);
-    setPairRiskScore(null);
-    setPairRiskExpanded(false);
-    setPairRiskDetails({
+    setRunRiskLabel(null);
+    setRunRiskScore(null);
+    setRunRiskExpanded(false);
+    setRunRiskDetails({
       topDrivers: [],
       reasonCodes: [],
       requiredControls: [],
@@ -532,21 +585,20 @@ export function AIPanel({
         streamLines: appendStreamLines(prev.streamLines, ["[SYSTEM] Final response ready."]),
         highlightedSnippet: "",
         matchedTerms: [],
+        contentFlags: runResult.artifacts?.diff?.contentFlags ?? [],
       }));
-      if (mode === "pair") {
-        const mergedFiles = runResult.artifacts?.diff?.generatedFiles ?? {};
-        if (Object.keys(mergedFiles).length) {
-          setPairPendingFiles((prev) => ({ ...prev, ...mergedFiles }));
-        }
-        setPairRiskLabel(toDisplayRiskLabel(runResult.gate?.riskTier));
-        setPairRiskScore(typeof runResult.gate?.riskScore === "number" ? runResult.gate.riskScore : null);
-        setPairRiskDetails({
-          topDrivers: runResult.gate?.riskCard?.topDrivers ?? [],
-          reasonCodes: runResult.gate?.reasonCodes ?? [],
-          requiredControls: runResult.gate?.riskCard?.requiredControls ?? [],
-          blockReasons: runResult.gate?.blockReasons ?? [],
-        });
+      const mergedFiles = runResult.artifacts?.diff?.generatedFiles ?? {};
+      if (mode === "pair" && Object.keys(mergedFiles).length) {
+        setPairPendingFiles((prev) => ({ ...prev, ...mergedFiles }));
       }
+      setRunRiskLabel(toDisplayRiskLabel(runResult.gate?.riskTier));
+      setRunRiskScore(typeof runResult.gate?.riskScore === "number" ? runResult.gate.riskScore : null);
+      setRunRiskDetails({
+        topDrivers: runResult.gate?.riskCard?.topDrivers ?? [],
+        reasonCodes: runResult.gate?.reasonCodes ?? [],
+        requiredControls: runResult.gate?.riskCard?.requiredControls ?? [],
+        blockReasons: runResult.gate?.blockReasons ?? [],
+      });
       if (mode === "autopilot") {
         maybeAutoSwitchToResponse();
       } else {
@@ -595,15 +647,15 @@ export function AIPanel({
         }
         if (mode === "pair") {
           setPairPendingFiles(runResult.artifacts?.diff?.generatedFiles ?? {});
-          setPairRiskLabel(toDisplayRiskLabel(runResult.gate?.riskTier));
-          setPairRiskScore(typeof runResult.gate?.riskScore === "number" ? runResult.gate.riskScore : null);
-          setPairRiskDetails({
-            topDrivers: runResult.gate?.riskCard?.topDrivers ?? [],
-            reasonCodes: runResult.gate?.reasonCodes ?? [],
-            requiredControls: runResult.gate?.riskCard?.requiredControls ?? [],
-            blockReasons: runResult.gate?.blockReasons ?? [],
-          });
         }
+        setRunRiskLabel(toDisplayRiskLabel(runResult.gate?.riskTier));
+        setRunRiskScore(typeof runResult.gate?.riskScore === "number" ? runResult.gate.riskScore : null);
+        setRunRiskDetails({
+          topDrivers: runResult.gate?.riskCard?.topDrivers ?? [],
+          reasonCodes: runResult.gate?.reasonCodes ?? [],
+          requiredControls: runResult.gate?.riskCard?.requiredControls ?? [],
+          blockReasons: runResult.gate?.blockReasons ?? [],
+        });
         setRunLogs((prev) => [...prev, ...buildRunLogs(promptInput, runResult)].slice(-120));
         if ((runResult.proofs ?? []).some((item) => item.proof.provider === "codex-harness")) {
           setRunLogs((prev) =>
@@ -621,6 +673,7 @@ export function AIPanel({
           streamLines: [],
           highlightedSnippet: "",
           matchedTerms: [],
+          contentFlags: runResult.artifacts?.diff?.contentFlags ?? [],
         });
         if (mode === "autopilot") {
           maybeAutoSwitchToResponse();
@@ -655,44 +708,6 @@ export function AIPanel({
   const handleSubmit = async () => {
     const rawPrompt = assistPrompt.trim();
     if (!rawPrompt) return;
-    const isFastCompanion = mode === "assist" && isCompanionOnlyConfidence(confidencePercent);
-    if (isFastCompanion) {
-      setIsSubmitting(true);
-      let fastResponse: ReturnType<typeof buildQuickAssistResponse>;
-      try {
-        const apiResponse = await fetchQuickAssistSuggestion({
-          question: rawPrompt,
-          selectedFile,
-          selectedCode: selectedCodeSnippet,
-          fileContent,
-        });
-        fastResponse = {
-          assistantReply: apiResponse.suggestion,
-          rationale: apiResponse.rationale,
-          highlightedSnippet: apiResponse.relevantSnippet,
-          matchedTerms: [],
-        };
-      } catch {
-        fastResponse = buildQuickAssistResponse({
-          question: rawPrompt,
-          selectedFile,
-          selectedCode: selectedCodeSnippet,
-          fileContent,
-        });
-      } finally {
-        setIsSubmitting(false);
-      }
-      setResponseSummary((prev) => ({
-        ...prev,
-        assistantReply: fastResponse.assistantReply,
-        rationale: fastResponse.rationale,
-        highlightedSnippet: fastResponse.highlightedSnippet,
-        matchedTerms: fastResponse.matchedTerms,
-      }));
-      setViewerTab("editor");
-      setRunLogs((prev) => [...prev, `[assistant-fast] ${rawPrompt}`].slice(-120));
-      return;
-    }
     const nextPrompt =
       mode === "assist"
         ? buildAssistCompanionPrompt({
@@ -744,6 +759,12 @@ export function AIPanel({
           responseSummary.rationale ||
           responseSummary.streamLines.length
       );
+  const assistantContentFlags = responseSummary.contentFlags.filter(
+    (item) => item.target === "assistantReply"
+  );
+  const rationaleContentFlags = responseSummary.contentFlags.filter(
+    (item) => item.target === "rationale"
+  );
 
   const getPermissionState = (
     category: GovernancePermission["category"]
@@ -799,6 +820,42 @@ export function AIPanel({
       <div className="mt-3 rounded-lg border border-violet-300/20 bg-violet-300/[0.05] p-3">
         <p className="text-sm font-medium text-violet-100">Mode: {mode}</p>
         <p className="mt-2 text-sm text-white/80">{panelNotes[mode]}</p>
+        {runRiskLabel ? (
+          <div className="mt-3 rounded-md border border-white/12 bg-black/25 p-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                  runRiskLabel === "LOW"
+                    ? "border-emerald-300/35 bg-emerald-300/12 text-emerald-100"
+                    : runRiskLabel === "MEDIUM"
+                      ? "border-amber-300/35 bg-amber-300/12 text-amber-100"
+                      : "border-rose-300/35 bg-rose-300/12 text-rose-100"
+                }`}
+              >
+                RISK {runRiskLabel}
+              </span>
+              <span className="text-[11px] text-white/70">
+                {runRiskScore !== null ? `${runRiskScore}/100` : "pending"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setRunRiskExpanded((prev) => !prev)}
+                className="rounded border border-white/20 px-2 py-0.5 text-[10px] text-white/80 hover:bg-white/[0.08]"
+              >
+                {runRiskExpanded ? "Hide why" : "Why?"}
+              </button>
+            </div>
+            {runRiskExpanded ? (
+              <div className="mt-2 text-[10px] text-white/75">
+                {runRiskDetails.topDrivers.length ? (
+                  <p>Top drivers: {runRiskDetails.topDrivers.join(", ")}</p>
+                ) : (
+                  <p>No high-risk drivers were detected in this run.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className={isHumanGuided ? "mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start" : ""}>
         <div className={isHumanGuided ? "xl:order-2" : ""}>
@@ -1094,23 +1151,23 @@ export function AIPanel({
                                 </p>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
                                   <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
-                                    pairRiskLabel === "LOW"
+                                    runRiskLabel === "LOW"
                                       ? "border-emerald-300/40 bg-emerald-300/12 text-emerald-100"
-                                      : pairRiskLabel === "MEDIUM"
+                                      : runRiskLabel === "MEDIUM"
                                         ? "border-amber-300/40 bg-amber-300/12 text-amber-100"
                                         : "border-rose-300/40 bg-rose-300/12 text-rose-100"
                                   }`}>
-                                    FINAL RISK: {pairRiskLabel || "MEDIUM"}
+                                    FINAL RISK: {runRiskLabel || "MEDIUM"}
                                   </span>
                                   <span className="text-white/70">
-                                    {pairRiskScore !== null ? `Score ${pairRiskScore}/100` : "Score pending"}
+                                    {runRiskScore !== null ? `Score ${runRiskScore}/100` : "Score pending"}
                                   </span>
                                   <button
                                     type="button"
-                                    onClick={() => setPairRiskExpanded((prev) => !prev)}
+                                    onClick={() => setRunRiskExpanded((prev) => !prev)}
                                     className="rounded border border-white/20 px-2 py-0.5 text-[10px] text-white/80 hover:bg-white/[0.08]"
                                   >
-                                    {pairRiskExpanded ? "Hide details" : "Why?"}
+                                    {runRiskExpanded ? "Hide details" : "Why?"}
                                   </button>
                                 </div>
                               </div>
@@ -1145,36 +1202,40 @@ export function AIPanel({
                               ) : (
                                 <div className="rounded border border-white/10 bg-black/45 p-2 text-[11px] text-white/80">
                                   {responseSummary.assistantReply ? (
-                                    <p className="whitespace-pre-wrap">{responseSummary.assistantReply}</p>
+                                    <p className="whitespace-pre-wrap">
+                                      {renderInlineRiskText(responseSummary.assistantReply, assistantContentFlags)}
+                                    </p>
                                   ) : null}
                                   {responseSummary.rationale ? (
-                                    <p className="mt-1 whitespace-pre-wrap text-white/70">{responseSummary.rationale}</p>
+                                    <p className="mt-1 whitespace-pre-wrap text-white/70">
+                                      {renderInlineRiskText(responseSummary.rationale, rationaleContentFlags)}
+                                    </p>
                                   ) : null}
                                   <p className="mt-1 text-[10px] text-white/55">
                                     No direct file patch was produced for this prompt. Try asking for an explicit code edit.
                                   </p>
                                 </div>
                               )}
-                              {pairRiskExpanded ? (
+                              {runRiskExpanded ? (
                                 <div className="rounded border border-white/10 bg-black/35 p-2 text-[10px] text-white/75">
-                                  {pairRiskDetails.topDrivers.length ? (
-                                    <p>Top drivers: {pairRiskDetails.topDrivers.join(", ")}</p>
+                                  {runRiskDetails.topDrivers.length ? (
+                                    <p>Top drivers: {runRiskDetails.topDrivers.join(", ")}</p>
                                   ) : null}
-                                  {pairRiskDetails.reasonCodes.length ? (
-                                    <p className="mt-1">Reason codes: {pairRiskDetails.reasonCodes.join(", ")}</p>
+                                  {runRiskDetails.reasonCodes.length ? (
+                                    <p className="mt-1">Reason codes: {runRiskDetails.reasonCodes.join(", ")}</p>
                                   ) : null}
-                                  {pairRiskDetails.requiredControls.length ? (
+                                  {runRiskDetails.requiredControls.length ? (
                                     <p className="mt-1">
-                                      Required controls: {pairRiskDetails.requiredControls.join(", ")}
+                                      Required controls: {runRiskDetails.requiredControls.join(", ")}
                                     </p>
                                   ) : null}
-                                  {pairRiskDetails.blockReasons.length ? (
-                                    <p className="mt-1">Block reasons: {pairRiskDetails.blockReasons.join(" | ")}</p>
+                                  {runRiskDetails.blockReasons.length ? (
+                                    <p className="mt-1">Block reasons: {runRiskDetails.blockReasons.join(" | ")}</p>
                                   ) : null}
-                                  {!pairRiskDetails.topDrivers.length &&
-                                  !pairRiskDetails.reasonCodes.length &&
-                                  !pairRiskDetails.requiredControls.length &&
-                                  !pairRiskDetails.blockReasons.length ? (
+                                  {!runRiskDetails.topDrivers.length &&
+                                  !runRiskDetails.reasonCodes.length &&
+                                  !runRiskDetails.requiredControls.length &&
+                                  !runRiskDetails.blockReasons.length ? (
                                     <p>No additional risk details returned for this recommendation.</p>
                                   ) : null}
                                 </div>
@@ -1214,12 +1275,12 @@ export function AIPanel({
                             <>
                               {responseSummary.assistantReply ? (
                                 <p className="mt-1 whitespace-pre-wrap text-white/85">
-                                  {responseSummary.assistantReply}
+                                  {renderInlineRiskText(responseSummary.assistantReply, assistantContentFlags)}
                                 </p>
                               ) : null}
                               {responseSummary.rationale ? (
                                 <p className="mt-1 whitespace-pre-wrap text-white/75">
-                                  {responseSummary.rationale}
+                                  {renderInlineRiskText(responseSummary.rationale, rationaleContentFlags)}
                                 </p>
                               ) : null}
                               {responseSummary.highlightedSnippet ? (
@@ -1333,6 +1394,11 @@ export function AIPanel({
                     rationale={responseSummary.rationale}
                     generatedFiles={responseSummary.generatedFiles}
                     streamLines={responseSummary.streamLines}
+                    contentFlags={responseSummary.contentFlags}
+                    riskScore={runRiskScore}
+                    riskLabel={runRiskLabel}
+                    findings={findings}
+                    riskDetails={runRiskDetails}
                   />
                 ) : null}
                 {viewerTab === "logs" ? (

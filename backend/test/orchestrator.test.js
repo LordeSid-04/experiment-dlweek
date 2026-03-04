@@ -41,6 +41,47 @@ test("pipeline emits usable diff lines for generated files", async () => {
   );
 });
 
+test("pipeline uses direct non-agent path at 0 percent", async () => {
+  const result = await runPipeline({
+    prompt: "Explain this function and suggest a tiny fix. Also check for token logging risk.",
+    actor: "test-user",
+    confidenceMode: "assist",
+    confidencePercent: 0,
+    projectFiles: {
+      "src/example.ts": "export function square(x:number){ return x * 2; }\nconsole.log(headers.authorization);",
+    },
+  });
+
+  assert.ok(result.runId);
+  assert.equal(result.blocked, false);
+  assert.ok(Array.isArray(result.proofs));
+  assert.equal(result.proofs.length, 1);
+  assert.equal(result.proofs[0].proof.agentRole, "DEVELOPER");
+  assert.equal(result.gate.reasonCodes[0], "DIRECT_MODEL_NO_AGENT");
+  assert.ok(typeof result.gate.riskScore === "number");
+  assert.ok(Array.isArray(result.findings));
+  assert.ok(result.artifacts?.diff?.contentFlags !== undefined);
+});
+
+test("pipeline uses direct non-agent path at 50 percent", async () => {
+  const result = await runPipeline({
+    prompt: "Propose a patch to fix this bug safely",
+    actor: "test-user",
+    confidenceMode: "pair",
+    confidencePercent: 50,
+    projectFiles: {
+      "src/math.ts": "export function cube(x:number){ return x * 3; }",
+    },
+  });
+
+  assert.ok(result.runId);
+  assert.equal(result.blocked, false);
+  assert.ok(Array.isArray(result.timeline));
+  assert.equal(result.timeline.length, 1);
+  assert.equal(result.gate.reasonCodes[0], "DIRECT_MODEL_NO_AGENT");
+  assert.ok(typeof result.gate.riskScore === "number");
+});
+
 test("stream pipeline emits human control requirement events", async () => {
   const seenEventTypes = [];
   await streamPipeline({

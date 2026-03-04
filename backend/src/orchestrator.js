@@ -4,6 +4,7 @@ const { runVerifierAgent } = require("./agents/verifier");
 const { runOperatorAgent } = require("./agents/operator");
 const { runGovernorAgent } = require("./agents/governor");
 const { appendLedgerEvent, buildLedgerEvent } = require("./lib/evidence-ledger");
+const { runDirectAssistPath, shouldUseDirectModelPath } = require("./lib/direct-assist");
 
 function toTitleRole(role) {
   return role[0] + role.slice(1).toLowerCase();
@@ -107,6 +108,33 @@ function mapFindings(findings) {
     evidence: item.evidence,
     suggestedFixSnippet: item.suggestedFixSnippet,
   }));
+}
+
+function buildContentFlags({ assistantReply, rationale, findings }) {
+  const segments = [
+    { target: "assistantReply", text: String(assistantReply || "") },
+    { target: "rationale", text: String(rationale || "") },
+  ];
+  const flags = [];
+  for (const finding of findings || []) {
+    const evidence = String(finding?.evidence || "").trim();
+    if (!evidence) continue;
+    for (const segment of segments) {
+      const index = segment.text.toLowerCase().indexOf(evidence.toLowerCase());
+      if (index !== -1) {
+        flags.push({
+          target: segment.target,
+          start: index,
+          end: index + evidence.length,
+          severity: finding.severity,
+          title: finding.title,
+          ruleName: finding.ruleName,
+          evidence,
+        });
+      }
+    }
+  }
+  return flags.slice(0, 30);
 }
 
 function hasUsableProjectScaffold(artifact) {
@@ -214,6 +242,16 @@ async function executePipeline({
   projectFiles = {},
   emitEvent,
 }) {
+  if (shouldUseDirectModelPath(confidencePercent)) {
+    return runDirectAssistPath({
+      prompt,
+      actor,
+      confidencePercent,
+      projectFiles,
+      emitEvent,
+    });
+  }
+
   const emit = toEventEmitter(emitEvent);
   const timeline = [];
   const proofs = [];
@@ -593,6 +631,15 @@ async function executePipeline({
     riskCard: finalGov.artifact.riskCard,
   });
   appendLedgerEvent(ledgerEvent);
+  const contentFlags = buildContentFlags({
+    assistantReply: developer.artifact.assistantReply,
+    rationale: developer.artifact.rationale,
+    findings: finalGov.artifact.findings,
+  });
+  artifacts.diff = {
+    ...artifacts.diff,
+    contentFlags,
+  };
 
   const result = {
     runId,

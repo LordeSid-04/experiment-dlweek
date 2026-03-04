@@ -326,8 +326,9 @@ function extractOutputText(payload) {
 }
 
 async function getQuickAssistSuggestion(payload) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) {
+  const openAiKey = process.env.OPENAI_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!openAiKey && !geminiKey) {
     const heuristic = buildHeuristicSuggestion(payload);
     if (heuristic) {
       return heuristic;
@@ -362,36 +363,99 @@ async function getQuickAssistSuggestion(payload) {
   const timeoutMs = Number(process.env.OPENAI_FAST_TIMEOUT_MS || 8000);
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        max_output_tokens: 420,
-        text: {
-          format: {
-            type: "json_schema",
-            name: "quick_assist_response",
-            strict: true,
-            schema: QUICK_ASSIST_RESPONSE_SCHEMA,
-          },
+    let response;
+    let json;
+    if (geminiKey) {
+      const model = process.env.GEMINI_MODEL_ASSIST || "gemini-2.0-flash";
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(geminiKey)}`;
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-        input: [
-          {
-            role: "system",
-            content: [{ type: "input_text", text: systemPrompt }],
+        signal: controller.signal,
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{ text: systemPrompt }],
           },
-          {
-            role: "user",
-            content: [{ type: "input_text", text: userPrompt }],
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: userPrompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.25,
+            maxOutputTokens: 420,
           },
-        ],
-      }),
-    });
+        }),
+      });
+      if (!response.ok && openAiKey) {
+        const fallbackModel = process.env.OPENAI_FAST_MODEL || "gpt-4o-mini";
+        response = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${openAiKey}`,
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+          model: fallbackModel || model,
+            max_output_tokens: 420,
+          text: {
+            format: {
+              type: "json_schema",
+              name: "quick_assist_response",
+              strict: true,
+              schema: QUICK_ASSIST_RESPONSE_SCHEMA,
+            },
+          },
+            input: [
+              {
+                role: "system",
+                content: [{ type: "input_text", text: systemPrompt }],
+              },
+              {
+                role: "user",
+                content: [{ type: "input_text", text: userPrompt }],
+              },
+            ],
+          }),
+        });
+      }
+    } else {
+      const model = process.env.OPENAI_FAST_MODEL || "gpt-4o-mini";
+      response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openAiKey}`,
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: model || process.env.OPENAI_MODEL || "gpt-5-codex",
+          max_output_tokens: 420,
+          text: {
+            format: {
+              type: "json_schema",
+              name: "quick_assist_response",
+              strict: true,
+              schema: QUICK_ASSIST_RESPONSE_SCHEMA,
+            },
+          },
+          input: [
+            {
+              role: "system",
+              content: [{ type: "input_text", text: systemPrompt }],
+            },
+            {
+              role: "user",
+              content: [{ type: "input_text", text: userPrompt }],
+            },
+          ],
+        }),
+      });
+    }
 
     if (!response.ok) {
       const heuristic = buildHeuristicSuggestion(payload);
@@ -400,8 +464,13 @@ async function getQuickAssistSuggestion(payload) {
       }
       return fallbackSuggestion(payload);
     }
-    const json = await response.json();
-    const outputText = extractOutputText(json);
+    json = await response.json();
+    const outputText = extractOutputText(json)
+      || json.candidates
+        ?.flatMap((candidate) => candidate.content?.parts || [])
+        ?.map((part) => part.text || "")
+        ?.join("\n")
+      || "";
     const parsed = json.output_parsed || extractJsonObject(outputText);
     if (!parsed) {
       const fallback = fallbackSuggestion(payload);

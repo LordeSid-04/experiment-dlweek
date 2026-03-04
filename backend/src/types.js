@@ -3,7 +3,7 @@
  * @typedef {"assist"|"pair"|"autopilot"} ConfidenceMode
  *
  * @typedef {Object} CodexProof
- * @property {"openai-api"|"codex-harness"|"policy-engine"} provider
+ * @property {"openai-api"|"google-gemini"|"codex-harness"|"policy-engine"} provider
  * @property {string} model
  * @property {string} responseId
  * @property {string} timestamp
@@ -19,6 +19,7 @@
  * @property {string} unifiedDiff
  * @property {string[]} filesTouched
  * @property {string} rationale
+ * @property {Array<{target:"assistantReply"|"rationale",start:number,end:number,severity:"LOW"|"MED"|"HIGH"|"CRITICAL",title:string,ruleName:string,evidence:string}>} [contentFlags]
  *
  * @typedef {Object} TestArtifact
  * @property {string[]} testsToAdd

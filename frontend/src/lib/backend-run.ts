@@ -4,7 +4,7 @@ import type { MockRunResult } from "@/lib/mockRun";
 export interface CodexProofRecord {
   step: string;
   proof: {
-    provider: "openai-api" | "codex-harness" | "policy-engine";
+    provider: "openai-api" | "google-gemini" | "codex-harness" | "policy-engine";
     model: string;
     responseId: string;
     timestamp: string;
@@ -24,6 +24,15 @@ export interface GovernedRunResult extends MockRunResult {
       generatedFiles?: Record<string, string>;
       previewHtml?: string;
       assistantReply?: string;
+      contentFlags?: Array<{
+        target: "assistantReply" | "rationale";
+        start: number;
+        end: number;
+        severity: "LOW" | "MED" | "HIGH" | "CRITICAL";
+        title: string;
+        ruleName: string;
+        evidence: string;
+      }>;
     };
     test?: { dryRunResults?: string[] };
     ops?: { deployPlan?: string[]; rolloutSteps?: string[]; rollbackPlan?: string[] };

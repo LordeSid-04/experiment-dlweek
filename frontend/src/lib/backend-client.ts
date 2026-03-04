@@ -4,7 +4,7 @@ export interface BackendApprovalRecord {
 }
 
 export interface BackendProof {
-  provider: "openai-api" | "codex-harness" | "policy-engine";
+  provider: "openai-api" | "google-gemini" | "codex-harness" | "policy-engine";
   model: string;
   responseId: string;
   timestamp: string;
