@@ -4,7 +4,7 @@ export interface BackendApprovalRecord {
 }
 
 export interface BackendProof {
-  provider: "openai-api" | "google-gemini" | "codex-harness" | "policy-engine";
+  provider: "openai-api" | "policy-engine";
   model: string;
   responseId: string;
   timestamp: string;
@@ -31,16 +31,19 @@ export interface BackendPipelineResponse {
 
 const backendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
 
-export async function runBackendPipeline(request: string): Promise<BackendPipelineResponse> {
+export async function runBackendPipeline(prompt: string): Promise<BackendPipelineResponse> {
   const response = await fetch(`${backendBaseUrl}/api/orchestrator/run`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      request,
+      prompt,
       actor: "frontend-user",
       approvals: [] as BackendApprovalRecord[],
+      confidenceMode: "pair",
+      confidencePercent: 50,
+      projectFiles: {},
     }),
   });
 

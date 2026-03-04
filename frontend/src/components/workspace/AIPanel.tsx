@@ -19,7 +19,6 @@ import { DiffViewer } from "@/components/workspace/DiffViewer";
 import { CodeEditor } from "@/components/workspace/CodeEditor";
 import { ResponseViewer } from "@/components/workspace/ResponseViewer";
 import {
-  generateMockRun,
   type DiffFinding,
   type MockRunResult,
   type RunTimelineStep,
@@ -28,7 +27,6 @@ import {
 import { inferCodeLanguage } from "@/lib/syntax";
 import {
   buildAssistCompanionPrompt,
-  buildScopedExecutionPrompt,
   isCompanionOnlyConfidence,
 } from "@/lib/assist-companion";
 import type { RunCodeResult } from "@/lib/code-runner";
@@ -118,10 +116,13 @@ function appendStreamLines(previous: string[], additions: string[]): string[] {
   return [...previous, ...additions].slice(-160);
 }
 
-function toDisplayRiskLabel(riskTier?: "LOW" | "MED" | "HIGH" | "CRITICAL"): "LOW" | "MEDIUM" | "HIGH" {
+function toDisplayRiskLabel(
+  riskTier?: "LOW" | "MED" | "HIGH" | "CRITICAL"
+): "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" {
   if (!riskTier) return "MEDIUM";
   if (riskTier === "LOW") return "LOW";
   if (riskTier === "MED") return "MEDIUM";
+  if (riskTier === "CRITICAL") return "CRITICAL";
   return "HIGH";
 }
 
@@ -208,7 +209,7 @@ export function AIPanel({
   const [selectedCodeSnippet, setSelectedCodeSnippet] = useState("");
   const [editorRunResult, setEditorRunResult] = useState<RunCodeResult | null>(null);
   const [pairPendingFiles, setPairPendingFiles] = useState<Record<string, string>>({});
-  const [runRiskLabel, setRunRiskLabel] = useState<"LOW" | "MEDIUM" | "HIGH" | null>(null);
+  const [runRiskLabel, setRunRiskLabel] = useState<"LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | null>(null);
   const [runRiskScore, setRunRiskScore] = useState<number | null>(null);
   const [runRiskExpanded, setRunRiskExpanded] = useState(false);
   const [runRiskDetails, setRunRiskDetails] = useState<{
@@ -216,14 +217,15 @@ export function AIPanel({
     reasonCodes: string[];
     requiredControls: string[];
     blockReasons: string[];
+    evidenceQuotes: string[];
   }>({
     topDrivers: [],
     reasonCodes: [],
     requiredControls: [],
     blockReasons: [],
+    evidenceQuotes: [],
   });
   const [pairCopied, setPairCopied] = useState(false);
-  const [scopeSnippetCopied, setScopeSnippetCopied] = useState(false);
   const [pairDecision, setPairDecision] = useState<"approved" | "denied" | null>(null);
   const [viewerTab, setViewerTab] = useState<"preview" | "editor" | "diff" | "logs" | "response">(
     mode === "autopilot" ? "preview" : "editor"
@@ -436,7 +438,6 @@ export function AIPanel({
       contentFlags: [],
     });
     setPairPendingFiles({});
-    setScopeSnippetCopied(false);
     setRunRiskLabel(null);
     setRunRiskScore(null);
     setRunRiskExpanded(false);
@@ -445,6 +446,7 @@ export function AIPanel({
       reasonCodes: [],
       requiredControls: [],
       blockReasons: [],
+      evidenceQuotes: [],
     });
     setPairCopied(false);
     setPairDecision(null);
@@ -563,20 +565,6 @@ export function AIPanel({
       setTimeline(runResult.timeline);
       setProofs(runResult.proofs ?? streamProofs);
       setRunLogs((prev) => [...prev, ...buildRunLogs(promptInput, runResult)].slice(-120));
-      if ((runResult.proofs ?? []).some((item) => item.proof.provider === "codex-harness")) {
-        setRunLogs((prev) =>
-          [
-            ...prev,
-            "[warning] OpenAI API was unavailable for at least one stage; fallback harness content may reduce output quality.",
-          ].slice(-120)
-        );
-        setResponseSummary((prev) => ({
-          ...prev,
-          streamLines: appendStreamLines(prev.streamLines, [
-            "[SYSTEM] Warning: fallback harness used in some stages; connect OpenAI API key for best quality.",
-          ]),
-        }));
-      }
       setResponseSummary((prev) => ({
         promptText: prev.promptText || promptInput,
         assistantReply: runResult.artifacts?.diff?.assistantReply ?? "",
@@ -601,6 +589,7 @@ export function AIPanel({
         reasonCodes: runResult.gate?.reasonCodes ?? [],
         requiredControls: runResult.gate?.riskCard?.requiredControls ?? [],
         blockReasons: runResult.gate?.blockReasons ?? [],
+        evidenceQuotes: runResult.gate?.riskCard?.evidenceQuotes ?? [],
       });
       if (mode === "autopilot") {
         maybeAutoSwitchToResponse();
@@ -658,16 +647,9 @@ export function AIPanel({
           reasonCodes: runResult.gate?.reasonCodes ?? [],
           requiredControls: runResult.gate?.riskCard?.requiredControls ?? [],
           blockReasons: runResult.gate?.blockReasons ?? [],
+          evidenceQuotes: runResult.gate?.riskCard?.evidenceQuotes ?? [],
         });
         setRunLogs((prev) => [...prev, ...buildRunLogs(promptInput, runResult)].slice(-120));
-        if ((runResult.proofs ?? []).some((item) => item.proof.provider === "codex-harness")) {
-          setRunLogs((prev) =>
-            [
-              ...prev,
-              "[warning] OpenAI API was unavailable for at least one stage; fallback harness content may reduce output quality.",
-            ].slice(-120)
-          );
-        }
         setResponseSummary({
           promptText: promptInput,
           assistantReply: runResult.artifacts?.diff?.assistantReply ?? "",
@@ -691,15 +673,12 @@ export function AIPanel({
           setRunLogs((prev) => [...prev, "[system] Connection interrupted. Partial results are shown."].slice(-120));
           return null;
         }
-        const fallbackRun = generateMockRun(promptInput, mode);
-        setTimeline(fallbackRun.timeline);
-        setProofs([]);
-        setRunLogs([
-          `[prompt] ${promptInput}`,
-          "[system] Backend unavailable. Showing fallback timeline results.",
+        setRunLogs((prev) => [
+          ...prev,
+          "[error] Backend request failed and no response could be recovered.",
+          "[hint] Verify OPENAI_API_KEY and model permissions in backend configuration.",
         ]);
-        onRunGenerated(fallbackRun);
-        return fallbackRun;
+        throw new Error("Backend run failed with no recoverable response.");
       }
     } finally {
       flushQueuedStreamUpdates();
@@ -718,12 +697,7 @@ export function AIPanel({
             selectedFile,
             selectedCode: selectedCodeSnippet,
           })
-        : buildScopedExecutionPrompt({
-            question: rawPrompt,
-            selectedFile,
-            selectedCode: selectedCodeSnippet,
-            mode: mode === "autopilot" ? "autopilot" : "pair",
-          });
+        : rawPrompt;
     if (!nextPrompt) return;
     await runWithGovernance(nextPrompt);
   };
@@ -767,9 +741,6 @@ export function AIPanel({
           responseSummary.rationale ||
           responseSummary.streamLines.length
       );
-  const hasSelectedScope = Boolean(selectedCodeSnippet.trim());
-  const selectedScopeLineCount = hasSelectedScope ? selectedCodeSnippet.split("\n").length : 0;
-  const selectedScopeCharCount = selectedCodeSnippet.trim().length;
   const assistantContentFlags = responseSummary.contentFlags.filter(
     (item) => item.target === "assistantReply"
   );
@@ -840,6 +811,8 @@ export function AIPanel({
                     ? "border-emerald-300/35 bg-emerald-300/12 text-emerald-100"
                     : runRiskLabel === "MEDIUM"
                       ? "border-amber-300/35 bg-amber-300/12 text-amber-100"
+                      : runRiskLabel === "CRITICAL"
+                        ? "border-fuchsia-300/40 bg-fuchsia-300/14 text-fuchsia-100"
                       : "border-rose-300/35 bg-rose-300/12 text-rose-100"
                 }`}
               >
@@ -955,48 +928,6 @@ export function AIPanel({
               placeholder="Describe what you want changed..."
               className="mt-3 min-h-[96px] w-full rounded-md border border-white/12 bg-white/[0.02] px-3 py-2 text-sm text-white outline-none placeholder:text-white/45"
             />
-            <div className="mt-3 rounded-md border border-white/10 bg-black/35 p-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] uppercase tracking-[0.08em] text-white/60">Selected Text Scope</p>
-                <div className="flex items-center gap-1.5">
-                  <span className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-white/70">
-                    {hasSelectedScope ? `${selectedScopeLineCount} line(s)` : "full file/project"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!hasSelectedScope) return;
-                      try {
-                        await navigator.clipboard.writeText(selectedCodeSnippet);
-                        setScopeSnippetCopied(true);
-                        window.setTimeout(() => setScopeSnippetCopied(false), 1200);
-                      } catch {
-                        setScopeSnippetCopied(false);
-                      }
-                    }}
-                    disabled={!hasSelectedScope}
-                    className="rounded border border-white/20 px-2 py-0.5 text-[10px] text-white/80 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {scopeSnippetCopied ? "Copied" : "Copy"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCodeSnippet("")}
-                    disabled={!hasSelectedScope}
-                    className="rounded border border-white/20 px-2 py-0.5 text-[10px] text-white/80 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Clear
-                  </button>
-                </div>
-              </div>
-              <div className="mt-2 max-h-28 overflow-auto rounded border border-white/10 bg-black/45 p-2 font-mono text-[11px] text-white/75">
-                {hasSelectedScope ? selectedCodeSnippet : "No selection captured. AI will use the full context."}
-              </div>
-              <p className="mt-2 text-[10px] text-white/60">
-                Scope policy: when selected text exists, pair mode instructions constrain changes to this selection.
-                {hasSelectedScope ? ` (${selectedScopeCharCount} chars selected)` : ""}
-              </p>
-            </div>
             <div className="mt-3 flex items-center gap-2">
               <button
                 type="button"
@@ -1050,48 +981,6 @@ export function AIPanel({
                 placeholder="Build a production-ready app with auth, dashboard, APIs, tests, and deployment checklist..."
                 className="mt-3 min-h-[120px] w-full rounded-md border border-white/12 bg-black/30 px-3 py-2 text-sm text-white outline-none placeholder:text-white/45"
               />
-              <div className="mt-3 rounded-md border border-white/10 bg-black/35 p-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[11px] uppercase tracking-[0.08em] text-white/60">Selected Text Scope</p>
-                  <div className="flex items-center gap-1.5">
-                    <span className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-white/70">
-                      {hasSelectedScope ? `${selectedScopeLineCount} line(s)` : "full file/project"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!hasSelectedScope) return;
-                        try {
-                          await navigator.clipboard.writeText(selectedCodeSnippet);
-                          setScopeSnippetCopied(true);
-                          window.setTimeout(() => setScopeSnippetCopied(false), 1200);
-                        } catch {
-                          setScopeSnippetCopied(false);
-                        }
-                      }}
-                      disabled={!hasSelectedScope}
-                      className="rounded border border-white/20 px-2 py-0.5 text-[10px] text-white/80 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {scopeSnippetCopied ? "Copied" : "Copy"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCodeSnippet("")}
-                      disabled={!hasSelectedScope}
-                      className="rounded border border-white/20 px-2 py-0.5 text-[10px] text-white/80 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-2 max-h-28 overflow-auto rounded border border-white/10 bg-black/45 p-2 font-mono text-[11px] text-white/75">
-                  {hasSelectedScope ? selectedCodeSnippet : "No selection captured. Agent can operate on full context."}
-                </div>
-                <p className="mt-2 text-[10px] text-white/60">
-                  Scope policy: when selected text exists, autopilot instructions hard-scope work to this selection.
-                  {hasSelectedScope ? ` (${selectedScopeCharCount} chars selected)` : ""}
-                </p>
-              </div>
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"
@@ -1250,6 +1139,8 @@ export function AIPanel({
                                       ? "border-emerald-300/40 bg-emerald-300/12 text-emerald-100"
                                       : runRiskLabel === "MEDIUM"
                                         ? "border-amber-300/40 bg-amber-300/12 text-amber-100"
+                                        : runRiskLabel === "CRITICAL"
+                                          ? "border-fuchsia-300/40 bg-fuchsia-300/14 text-fuchsia-100"
                                         : "border-rose-300/40 bg-rose-300/12 text-rose-100"
                                   }`}>
                                     FINAL RISK: {runRiskLabel || "MEDIUM"}
@@ -1327,10 +1218,16 @@ export function AIPanel({
                                   {runRiskDetails.blockReasons.length ? (
                                     <p className="mt-1">Block reasons: {runRiskDetails.blockReasons.join(" | ")}</p>
                                   ) : null}
+                                  {runRiskDetails.evidenceQuotes.length ? (
+                                    <p className="mt-1">
+                                      Evidence: {runRiskDetails.evidenceQuotes.slice(0, 2).join(" | ")}
+                                    </p>
+                                  ) : null}
                                   {!runRiskDetails.topDrivers.length &&
                                   !runRiskDetails.reasonCodes.length &&
                                   !runRiskDetails.requiredControls.length &&
-                                  !runRiskDetails.blockReasons.length ? (
+                                  !runRiskDetails.blockReasons.length &&
+                                  !runRiskDetails.evidenceQuotes.length ? (
                                     <p>No additional risk details returned for this recommendation.</p>
                                   ) : null}
                                 </div>
@@ -1508,7 +1405,7 @@ export function AIPanel({
         ) : null}
         </div>
 
-        {mode === "autopilot" && timeline.length > 0 ? (
+        {mode !== "assist" && timeline.length > 0 ? (
           <details className="mt-4 rounded-xl border border-violet-300/20 bg-gradient-to-b from-[#120c1e] to-[#090611] p-3 shadow-[0_0_18px_rgba(139,92,246,0.12)]" open>
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-1 text-xs font-semibold uppercase tracking-[0.08em] text-violet-100/85">
               <span className="inline-flex items-center gap-1.5">

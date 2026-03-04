@@ -13,19 +13,19 @@ const DANGEROUS_DIFF_RULES = [
   },
   {
     ruleName: "DIFF-SQL-002",
-    regex: /\bDELETE\s+FROM\b(?![\s\S]{0,120}\bWHERE\b)/i,
+    regex: /\bDELETE\s+FROM\b(?![\s\S]{0,200}\bWHERE\b)/i,
     title: "DELETE FROM without WHERE detected",
     severity: "CRITICAL",
   },
   {
     ruleName: "DIFF-AUTH-003",
-    regex: /\b(auth|authorization)\b[\s\S]{0,40}\b(disabled|skip|bypass)\b/i,
+    regex: /\b(auth|authorization|middleware|guard)\b[\s\S]{0,60}\b(disabled?|disable|skip|bypass|off|false)\b/i,
     title: "Auth middleware bypass pattern detected",
     severity: "HIGH",
   },
   {
     ruleName: "DIFF-IAM-004",
-    regex: /"Action"\s*:\s*"\*"\s*,\s*"Resource"\s*:\s*"\*"/i,
+    regex: /("Action"\s*:\s*"\*"\s*,\s*"Resource"\s*:\s*"\*")|("actions?"\s*:\s*\[\s*"\*"\s*\])|(\bactions?\s*=\s*\[\s*"\*"\s*\])/i,
     title: "IAM wildcard permissions detected",
     severity: "HIGH",
   },
@@ -36,6 +36,10 @@ const DANGEROUS_DIFF_RULES = [
     severity: "HIGH",
   },
 ];
+
+function quoteEvidence(line) {
+  return String(line || "").trim().slice(0, 220);
+}
 
 const HIGH_SENSITIVITY_TOUCHED_PATHS = [
   "auth",
@@ -166,7 +170,7 @@ function scanUnifiedDiff(diffText) {
             ruleName: rule.ruleName,
             filePath: extractPathFromDiffContext(lines, idx) || "unknown",
             lineNumber: idx + 1,
-            evidence: line,
+            evidence: quoteEvidence(line),
             category: "dangerous-diff",
             confidence: "HIGH",
             riskContribution: rule.severity === "CRITICAL" ? 30 : 20,
@@ -234,7 +238,7 @@ function scanTrustBoundaries({ diffText = "" }) {
             ruleName: rule.ruleName,
             filePath: extractPathFromDiffContext(lines, idx) || "unknown",
             lineNumber: idx + 1,
-            evidence: line,
+            evidence: quoteEvidence(line),
             category: "trust-boundary",
             confidence: "MEDIUM",
             riskContribution: rule.severity === "CRITICAL" ? 30 : 14,
@@ -265,7 +269,7 @@ function scanPolicyDrift(diffText) {
             ruleName: rule.ruleName,
             filePath: extractPathFromDiffContext(lines, idx) || "unknown",
             lineNumber: idx + 1,
-            evidence: line,
+            evidence: quoteEvidence(line),
             category: "policy-drift",
             confidence: "MEDIUM",
             riskContribution: 18,

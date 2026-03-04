@@ -347,7 +347,7 @@ test("detects general knowledge prompts without code context", () => {
   );
 });
 
-test("knowledge artifact normalization rejects low-relevance answers", () => {
+test("knowledge artifact normalization preserves model reply in strict mode", () => {
   const lowRelevance = __test.normalizeKnowledgeArtifact(
     {
       assistantReply: "Use flexbox and media queries for responsive layouts.",
@@ -355,7 +355,7 @@ test("knowledge artifact normalization rejects low-relevance answers", () => {
     },
     "How does photosynthesis work in plants?"
   );
-  assert.match(lowRelevance.assistantReply, /need one extra detail/i);
+  assert.match(lowRelevance.assistantReply, /flexbox/i);
 
   const relevant = __test.normalizeKnowledgeArtifact(
     {
@@ -381,7 +381,7 @@ test("knowledge artifact normalization adds stronger verification for high-stake
   assert.match(normalized.assistantReply, /qualified professional|authoritative guidance/i);
 });
 
-test("knowledge artifact normalization rejects low-specificity generic answers", () => {
+test("knowledge artifact normalization keeps low-specificity reply without local fallback", () => {
   const normalized = __test.normalizeKnowledgeArtifact(
     {
       assistantReply: "It depends, provide more details.",
@@ -389,7 +389,7 @@ test("knowledge artifact normalization rejects low-specificity generic answers",
     },
     "Explain dark matter evidence."
   );
-  assert.match(normalized.assistantReply, /need one extra detail/i);
+  assert.match(normalized.assistantReply, /depends/i);
 });
 
 test("developer artifact fallback uses model text for non-build prompts", () => {

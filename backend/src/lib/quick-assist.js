@@ -327,16 +327,13 @@ function extractOutputText(payload) {
 
 async function getQuickAssistSuggestion(payload) {
   const openAiKey = process.env.OPENAI_API_KEY;
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (!openAiKey && !geminiKey) {
-    const heuristic = buildHeuristicSuggestion(payload);
-    if (heuristic) {
-      return heuristic;
-    }
-    return fallbackSuggestion(payload);
+  if (!openAiKey) {
+    throw new Error(
+      "OPENAI_API_KEY is missing. Configure backend OPENAI_API_KEY to enable assist suggestions."
+    );
   }
 
-  const model = process.env.OPENAI_FAST_MODEL || process.env.OPENAI_MODEL || "gpt-5-codex";
+  const model = process.env.OPENAI_FAST_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
   const systemPrompt = [
     "You are a fast assistant for code and general knowledge questions.",
     "Goal: maximize correctness and relevance for the user's exact question.",
@@ -363,139 +360,62 @@ async function getQuickAssistSuggestion(payload) {
   const timeoutMs = Number(process.env.OPENAI_FAST_TIMEOUT_MS || 8000);
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    let response;
-    let json;
-    if (geminiKey) {
-      const model = process.env.GEMINI_MODEL_ASSIST || "gemini-2.0-flash";
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(geminiKey)}`;
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openAiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        max_output_tokens: 420,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "quick_assist_response",
+            strict: true,
+            schema: QUICK_ASSIST_RESPONSE_SCHEMA,
+          },
         },
-        signal: controller.signal,
-        body: JSON.stringify({
-          system_instruction: {
-            parts: [{ text: systemPrompt }],
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: systemPrompt }],
           },
-          contents: [
-            {
-              role: "user",
-              parts: [{ text: userPrompt }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.25,
-            maxOutputTokens: 420,
+          {
+            role: "user",
+            content: [{ type: "input_text", text: userPrompt }],
           },
-        }),
-      });
-      if (!response.ok && openAiKey) {
-        const fallbackModel = process.env.OPENAI_FAST_MODEL || "gpt-4o-mini";
-        response = await fetch("https://api.openai.com/v1/responses", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${openAiKey}`,
-          },
-          signal: controller.signal,
-          body: JSON.stringify({
-          model: fallbackModel || model,
-            max_output_tokens: 420,
-          text: {
-            format: {
-              type: "json_schema",
-              name: "quick_assist_response",
-              strict: true,
-              schema: QUICK_ASSIST_RESPONSE_SCHEMA,
-            },
-          },
-            input: [
-              {
-                role: "system",
-                content: [{ type: "input_text", text: systemPrompt }],
-              },
-              {
-                role: "user",
-                content: [{ type: "input_text", text: userPrompt }],
-              },
-            ],
-          }),
-        });
-      }
-    } else {
-      const model = process.env.OPENAI_FAST_MODEL || "gpt-4o-mini";
-      response = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openAiKey}`,
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: model || process.env.OPENAI_MODEL || "gpt-5-codex",
-          max_output_tokens: 420,
-          text: {
-            format: {
-              type: "json_schema",
-              name: "quick_assist_response",
-              strict: true,
-              schema: QUICK_ASSIST_RESPONSE_SCHEMA,
-            },
-          },
-          input: [
-            {
-              role: "system",
-              content: [{ type: "input_text", text: systemPrompt }],
-            },
-            {
-              role: "user",
-              content: [{ type: "input_text", text: userPrompt }],
-            },
-          ],
-        }),
-      });
-    }
-
+        ],
+      }),
+    });
     if (!response.ok) {
-      const heuristic = buildHeuristicSuggestion(payload);
-      if (heuristic) {
-        return heuristic;
+      if (response.status === 401) {
+        throw new Error("OpenAI authentication failed. Check OPENAI_API_KEY.");
       }
-      return fallbackSuggestion(payload);
+      if (response.status === 403 || response.status === 404) {
+        throw new Error(`OpenAI model ${model} is not available for this account.`);
+      }
+      if (response.status === 429) {
+        throw new Error("OpenAI rate limit reached. Retry shortly.");
+      }
+      throw new Error(`OpenAI API error ${response.status}.`);
     }
-    json = await response.json();
+    const json = await response.json();
     const outputText = extractOutputText(json)
-      || json.candidates
-        ?.flatMap((candidate) => candidate.content?.parts || [])
-        ?.map((part) => part.text || "")
-        ?.join("\n")
       || "";
     const parsed = json.output_parsed || extractJsonObject(outputText);
     if (!parsed) {
-      const fallback = fallbackSuggestion(payload);
-      const plain = String(outputText || "").trim();
-      if (plain) {
-        return {
-          suggestion: plain.slice(0, 1000),
-          rationale:
-            "Model returned plain text instead of strict JSON; parsed fallback preserved the response content.",
-          relevantSnippet: fallback.relevantSnippet,
-        };
-      }
-      const heuristic = buildHeuristicSuggestion(payload);
-      if (heuristic) {
-        return heuristic;
-      }
-      return fallback;
+      throw new Error("OpenAI returned invalid quick-assist payload shape.");
     }
     return normalizeModelSuggestion(parsed, payload);
-  } catch {
-    const heuristic = buildHeuristicSuggestion(payload);
-    if (heuristic) {
-      return heuristic;
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (error?.name === "AbortError" || /timeout|aborted/i.test(message)) {
+      throw new Error(`OpenAI quick assist timed out after ${timeoutMs}ms.`);
     }
-    return fallbackSuggestion(payload);
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

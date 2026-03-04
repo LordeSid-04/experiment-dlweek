@@ -18,8 +18,9 @@ function deriveConfidenceMode(body) {
   }
   const value = Number(body?.confidencePercent);
   if (Number.isFinite(value)) {
-    if (value <= 29) return "assist";
-    if (value <= 70) return "pair";
+    const normalized = Math.min(100, Math.max(0, Math.round(value)));
+    if (normalized <= 25) return "assist";
+    if (normalized <= 75) return "pair";
     return "autopilot";
   }
   return "pair";
@@ -34,6 +35,20 @@ function sendJson(res, statusCode, payload) {
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
   });
   res.end(body);
+}
+
+function sendModelError(res, error) {
+  const status = Number(error?.status) || 500;
+  const code = String(error?.code || "MODEL_ERROR");
+  sendJson(res, status, {
+    error: error?.message || "Model request failed",
+    code,
+    remediation: [
+      "Verify OPENAI_API_KEY is present and valid in backend environment.",
+      "Verify requested OpenAI model is available for this account.",
+      "Retry after a short delay if the provider is rate limited.",
+    ],
+  });
 }
 
 function readBody(req) {
@@ -208,7 +223,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, result);
       return;
     } catch (error) {
-      sendJson(res, 500, { error: error.message || "unknown error" });
+      sendModelError(res, error);
       return;
     }
   }
@@ -229,7 +244,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, result);
       return;
     } catch (error) {
-      sendJson(res, 500, { error: error.message || "unknown error" });
+      sendModelError(res, error);
       return;
     }
   }
@@ -284,7 +299,7 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     } catch (error) {
-      sendJson(res, 500, { error: error.message || "unknown error" });
+      sendModelError(res, error);
       return;
     }
   }

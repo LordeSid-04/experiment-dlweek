@@ -246,6 +246,9 @@ async function executePipeline({
     return runDirectAssistPath({
       prompt,
       actor,
+      confidenceMode,
+      approvals,
+      breakGlass,
       confidencePercent,
       projectFiles,
       emitEvent,

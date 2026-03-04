@@ -58,6 +58,53 @@ Additional route:
 - Confidence is stored per selected project from the confidence page project selector.
 - Workspace save flow supports in-app project persistence and optional `.zip` download export.
 
+## Confidence Mode Contracts (Strict Reset)
+
+- `0% (Assist)`: OpenAI companion mode for scoped suggestions and targeted code guidance only.
+- `50% (Pair)`: OpenAI pair-programmer mode for partial code generation/fixes with governance gates.
+- `100% (Autopilot)`: full agentic pipeline (Architect/Developer/Verifier/Operator/Governor).
+- No heuristic/harness content fallback is used for generation paths; model failures now return explicit error codes and remediation guidance.
+
+## Safety Scanner + Risk Engine
+
+Every generated response is scanned and risk-scored before final gate output:
+
+- Secret pattern scanning (OpenAI/AWS/GitHub token formats)
+- Dangerous diff detection:
+  - `DROP TABLE`
+  - `DELETE FROM` without `WHERE`
+  - auth middleware disable/bypass patterns
+  - IAM wildcard permissions
+  - logging headers/cookies/tokens
+- Risk card now includes:
+  - `topDrivers`
+  - `requiredControls`
+  - `reasonCodes`
+  - `evidenceQuotes` (exact snippets with file/line references) shown under `Why?`
+
+## OpenAI Key Troubleshooting
+
+If quality is low or runs fail, check backend configuration first:
+
+1. Set `OPENAI_API_KEY` in backend env.
+2. Ensure selected model names are available for your account:
+   - `OPENAI_ASSIST_MODEL`
+   - `OPENAI_PAIR_MODEL`
+   - `OPENAI_CODEX_MODEL`
+3. Increase timeout if needed (`OPENAI_FAST_TIMEOUT_MS`, `DIRECT_MODEL_TIMEOUT_MS`).
+4. Backend now returns explicit model errors such as:
+   - `INVALID_API_KEY`
+   - `MODEL_NOT_PERMITTED`
+   - `MODEL_NOT_FOUND`
+   - `RATE_LIMITED`
+   - `TIMEOUT`
+
+## Rollout and Rollback Verification
+
+- Stage changes in small reversible steps.
+- Validate scanner/risk output and gate behavior in staging before broader rollout.
+- If rollback is required, revert to prior build artifacts and re-run verification checks (`tests + scanner assertions`) before reopening traffic.
+
 ## Tests
 
 Unit tests are included for ledger schemas/utilities:

@@ -1,10 +1,11 @@
 import type { GovernanceMode } from "@/lib/governance";
 import type { MockRunResult } from "@/lib/mockRun";
+import { resolveBackendBaseUrl } from "@/lib/auth";
 
 export interface CodexProofRecord {
   step: string;
   proof: {
-    provider: "openai-api" | "google-gemini" | "codex-harness" | "policy-engine";
+    provider: "openai-api" | "policy-engine";
     model: string;
     responseId: string;
     timestamp: string;
@@ -55,6 +56,7 @@ export interface GovernedRunResult extends MockRunResult {
       topDrivers: string[];
       requiredControls: string[];
       rationale: string;
+      evidenceQuotes?: string[];
     };
   };
 }
@@ -146,7 +148,7 @@ export function toApprovalHistoryEntries(events: GovernanceLedgerEvent[]): Appro
 }
 
 export async function fetchApprovalHistory(limit = 25): Promise<ApprovalHistoryEntry[]> {
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+  const baseUrl = resolveBackendBaseUrl();
   const response = await fetch(`${baseUrl}/api/ledger/events`);
   if (!response.ok) {
     throw new Error(`Ledger fetch failed with status ${response.status}`);
@@ -161,7 +163,7 @@ export async function fetchQuickAssistSuggestion(payload: {
   selectedCode?: string;
   fileContent?: string;
 }): Promise<QuickAssistSuggestion> {
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+  const baseUrl = resolveBackendBaseUrl();
   const response = await fetch(`${baseUrl}/api/assist/suggest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -181,7 +183,7 @@ export async function runGovernedPipeline(
   approvals: ApprovalRecord[] = [],
   breakGlass?: BreakGlassPayload
 ): Promise<GovernedRunResult> {
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+  const baseUrl = resolveBackendBaseUrl();
   const response = await fetch(`${baseUrl}/api/orchestrator/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -212,7 +214,7 @@ export async function streamGovernedPipeline(
   approvals: ApprovalRecord[] = [],
   breakGlass?: BreakGlassPayload
 ): Promise<GovernedRunResult> {
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+  const baseUrl = resolveBackendBaseUrl();
   const response = await fetch(`${baseUrl}/api/orchestrator/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

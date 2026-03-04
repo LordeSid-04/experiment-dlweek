@@ -423,21 +423,14 @@ function normalizeKnowledgeArtifact(raw, prompt) {
   const assistantReply = toString(raw?.assistantReply, "").trim();
   const rationale = toString(raw?.rationale, "").trim();
   if (!assistantReply) {
-    return buildKnowledgeFallbackArtifact(prompt);
-  }
-  if (!hasKnowledgeReplyRelevance(prompt, assistantReply, rationale)) {
-    return buildKnowledgeFallbackArtifact(prompt);
-  }
-  if (isLowSpecificityKnowledgeAnswer(assistantReply)) {
-    return buildKnowledgeFallbackArtifact(prompt);
+    throw new Error("DEVELOPER knowledge response missing assistantReply.");
   }
   const enrichedReply = appendVerificationGuidance(prompt, assistantReply);
   return {
     unifiedDiff: "",
     filesTouched: [],
     rationale:
-      rationale ||
-      "Provided a relevance-checked domain response with explicit uncertainty handling where needed.",
+      rationale || "Provided a domain response with explicit uncertainty handling where needed.",
     generatedFiles: {},
     previewHtml: "",
     assistantReply: enrichedReply,
@@ -1412,21 +1405,6 @@ async function runDeveloperAgent({
       userRequest
     );
 
-    let pass = 0;
-    while (pass < 2 && knowledgeArtifact.assistantReply === buildKnowledgeFallbackArtifact(userRequest).assistantReply) {
-      knowledgeCodex = await callCodex({
-        agentRole: "DEVELOPER",
-        systemPrompt: knowledgeSystemPrompt,
-        userPrompt: `${knowledgeUserPrompt}\n\nRefinement: increase relevance to user wording and keep factual claims conservative unless highly certain.`,
-        responseSchema: KNOWLEDGE_RESPONSE_SCHEMA,
-      });
-      knowledgeArtifact = normalizeKnowledgeArtifact(
-        knowledgeCodex.parsed || { assistantReply: knowledgeCodex.text, rationale: "" },
-        userRequest
-      );
-      pass += 1;
-    }
-
     return {
       artifact: knowledgeArtifact,
       proof: knowledgeCodex.proof,
@@ -1549,93 +1527,8 @@ Code edit enforcement:
       !isCompanyPromptGrounded(userRequest, normalizedArtifact) ||
       !hasExactBrandMatch(userRequest, normalizedArtifact) ||
       (autopilotBuildMode && !isHighQualityAutopilotArtifact(userRequest, normalizedArtifact, buildIntent)));
-
-  if (stillLowQualityAfterRefinement && autopilotBuildMode) {
-    const premiumFiles = buildPremiumFilesByIntent(userRequest, buildIntent);
-    normalizedArtifact.generatedFiles = {
-      ...normalizedArtifact.generatedFiles,
-      ...premiumFiles,
-    };
-    normalizedArtifact.filesTouched = Array.from(
-      new Set([...Object.keys(normalizedArtifact.generatedFiles), ...normalizedArtifact.filesTouched])
-    );
-    normalizedArtifact.previewHtml = premiumFiles["preview/index.html"];
-    normalizedArtifact.assistantReply =
-      buildIntent === "chatbot"
-        ? "Built a high-quality, responsive AI chatbot experience tailored to your prompt."
-        : buildIntent === "dashboard"
-          ? "Built a high-quality analytics dashboard with polished KPI, layout, and responsive structure."
-          : buildIntent === "website"
-            ? `Built a high-quality prompt-aligned website for ${deriveBrandLabel(userRequest)} with premium information architecture and content sections.`
-            : `Built a high-quality app scaffold for ${deriveBrandLabel(userRequest)} with modern responsive UI foundations.`;
-    normalizedArtifact.rationale =
-      "Autopilot premium quality fallback was applied to guarantee stronger relevance, completeness, and production-ready structure.";
-  }
-
-  if (autopilotBuildMode && codex.proof.provider === "codex-harness") {
-    const premiumFiles = buildPremiumFilesByIntent(userRequest, buildIntent);
-    normalizedArtifact.generatedFiles = {
-      ...normalizedArtifact.generatedFiles,
-      ...premiumFiles,
-    };
-    normalizedArtifact.filesTouched = Array.from(
-      new Set([...Object.keys(normalizedArtifact.generatedFiles), ...normalizedArtifact.filesTouched])
-    );
-    normalizedArtifact.previewHtml = premiumFiles["preview/index.html"];
-    normalizedArtifact.assistantReply =
-      buildIntent === "chatbot"
-        ? "Built a premium responsive AI chatbot experience while OpenAI fallback mode was active."
-        : buildIntent === "dashboard"
-          ? "Built a premium analytics dashboard experience while OpenAI fallback mode was active."
-          : buildIntent === "website"
-            ? `Built a premium prompt-aligned website for ${deriveBrandLabel(userRequest)} while OpenAI fallback mode was active.`
-            : `Built a premium prompt-aligned application for ${deriveBrandLabel(userRequest)} while OpenAI fallback mode was active.`;
-    normalizedArtifact.rationale =
-      "Applied deterministic premium generation to preserve quality and relevance in autopilot mode.";
-  }
-
-  if (codeEditMode && Object.keys(normalizedArtifact.generatedFiles).length === 0 && inlineSnippet.code) {
-    const candidateCode = extractCodeFromModelText(codex.text);
-    if (candidateCode) {
-      const targetPath = inferredInlinePath || "snippet.py";
-      normalizedArtifact.generatedFiles = { [targetPath]: candidateCode };
-      normalizedArtifact.filesTouched = [targetPath];
-      normalizedArtifact.rationale =
-        "Recovered corrected code from Codex text output when structured generatedFiles were missing.";
-      normalizedArtifact.assistantReply =
-        normalizedArtifact.assistantReply ||
-        `Generated a corrected version of your pasted code in ${targetPath}.`;
-    }
-  }
-
-  if (codeEditMode && Object.keys(normalizedArtifact.generatedFiles).length === 0 && inlineSnippet.code) {
-    const deterministic = buildInlinePythonBestEffortPatch(userRequest, inlineSnippet.code);
-    if (deterministic) {
-      const targetPath = inferredInlinePath || "snippet.py";
-      normalizedArtifact.generatedFiles = { [targetPath]: deterministic };
-      normalizedArtifact.filesTouched = [targetPath];
-      normalizedArtifact.rationale =
-        "Applied deterministic Python bug-fix fallback for inline code when model patch output was unavailable.";
-      normalizedArtifact.assistantReply =
-        `Produced a corrected full-file patch for your inline Python snippet at ${targetPath}.`;
-    }
-  }
-
-  if (codeEditMode && Object.keys(normalizedArtifact.generatedFiles).length === 0) {
-    const heuristicArtifact = buildLogicalMismatchDeveloperArtifact(userRequest, currentFiles);
-    if (heuristicArtifact) {
-      return {
-        artifact: heuristicArtifact,
-        proof: {
-          provider: "codex-harness",
-          model: "developer-logical-mismatch-rule",
-          responseId: `developer-logic-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          agentRole: "DEVELOPER",
-        },
-        modelText: JSON.stringify({ rule: "logical-mismatch-fix" }),
-      };
-    }
+  if (stillLowQualityAfterRefinement) {
+    throw new Error("DEVELOPER output quality gate failed in strict mode.");
   }
 
   return {

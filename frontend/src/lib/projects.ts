@@ -1,3 +1,5 @@
+import { resolveBackendBaseUrl } from "@/lib/auth";
+
 export type StoredProject = {
   id: string;
   name: string;
@@ -46,7 +48,7 @@ export function getActiveUserEmail(): string {
 export async function fetchProjectsForActiveUser(): Promise<StoredProject[]> {
   const email = getActiveUserEmail();
   if (!email) return [];
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+  const baseUrl = resolveBackendBaseUrl();
   const response = await fetch(`${baseUrl}/api/projects?email=${encodeURIComponent(email)}`);
   if (!response.ok) {
     throw new Error(`Project fetch failed with status ${response.status}`);
@@ -65,7 +67,7 @@ export async function saveProjectForActiveUser(input: {
   if (!email) {
     throw new Error("No active user session.");
   }
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+  const baseUrl = resolveBackendBaseUrl();
   const response = await fetch(`${baseUrl}/api/projects/save`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

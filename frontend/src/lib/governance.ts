@@ -31,10 +31,10 @@ export function clampPercent(percent: number): number {
 
 export function getMode(percent: number): GovernanceMode {
   const value = clampPercent(percent);
-  if (value <= 29) {
+  if (value <= 25) {
     return "assist";
   }
-  if (value <= 70) {
+  if (value <= 75) {
     return "pair";
   }
   return "autopilot";

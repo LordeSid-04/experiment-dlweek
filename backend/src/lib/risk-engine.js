@@ -50,8 +50,8 @@ function computeImpact(filesTouched = [], findings = []) {
   let impact = 0;
   for (const filePath of filesTouched) {
     const pathRisk = classifyPathRisk(filePath);
-    if (pathRisk === "HIGH") impact += 8;
-    else if (pathRisk === "MED") impact += 5;
+    if (pathRisk === "HIGH") impact += 10;
+    else if (pathRisk === "MED") impact += 6;
     else impact += 2;
   }
   if (findings.some((item) => item.ruleName === "DIFF-SQL-001" || item.ruleName === "DIFF-SQL-002")) {
@@ -124,12 +124,17 @@ function computeGovernanceGap({ approvals = [], includesBreakGlass, breakGlass, 
 function buildRiskCard({ score, findings = [], factors = {}, approvals = [] }) {
   const sorted = [...findings].sort((a, b) => scoreSeverity(b.severity) - scoreSeverity(a.severity));
   const topDrivers = sorted.slice(0, 3).map((item) => `${item.ruleName}:${item.severity}`);
+  const evidenceQuotes = sorted
+    .slice(0, 3)
+    .map((item) => `${item.filePath || "unknown"}:${item.lineNumber || 0} "${String(item.evidence || "").trim()}"`)
+    .filter(Boolean);
   const requiredControls = [];
   if (score >= 65) requiredControls.push("two-human-approvals");
   if (score >= 85) requiredControls.push("break-glass-with-expiry");
   if (countDistinctApprovers(approvals) === 0) requiredControls.push("human-review-required");
   return {
     topDrivers,
+    evidenceQuotes,
     requiredControls,
     rationale: `Impact ${factors.impact}, exploitability ${factors.exploitability}, uncertainty ${factors.uncertainty}, governance gap ${factors.governanceGap}.`,
   };

@@ -1,8 +1,7 @@
 export type AgentRole =
   | "ARCHITECT"
-  | "BUILDER"
+  | "DEVELOPER"
   | "VERIFIER"
-  | "SECURITY"
   | "OPERATOR"
   | "GOVERNOR";
 
@@ -18,11 +17,16 @@ export interface BreakGlassContext {
 }
 
 export interface LedgerEvent {
+  schemaVersion?: string;
   timestamp: string;
   actor: string;
   agentRole: AgentRole;
   actionType: string;
   resourcesTouched: string[];
+  prevEventHash?: string;
+  eventHash?: string;
+  scannerSummaryHash?: string;
+  riskCardHash?: string;
   diffHash: string;
   testHashes: string[];
   approvals: ApprovalRecord[];

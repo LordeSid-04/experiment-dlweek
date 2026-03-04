@@ -30,7 +30,37 @@ function validateLedgerEvent(event) {
     "testHashes",
     "approvals",
   ];
-  return required.every((key) => Object.prototype.hasOwnProperty.call(event, key));
+  if (!required.every((key) => Object.prototype.hasOwnProperty.call(event, key))) {
+    return false;
+  }
+  const validRoles = new Set(["ARCHITECT", "DEVELOPER", "VERIFIER", "OPERATOR", "GOVERNOR"]);
+  if (!validRoles.has(event.agentRole)) return false;
+  if (typeof event.schemaVersion !== "string" || !event.schemaVersion.trim()) return false;
+  if (typeof event.timestamp !== "string" || !event.timestamp.trim()) return false;
+  if (typeof event.actor !== "string" || !event.actor.trim()) return false;
+  if (typeof event.actionType !== "string" || !event.actionType.trim()) return false;
+  if (!Array.isArray(event.resourcesTouched) || !event.resourcesTouched.every((item) => typeof item === "string")) {
+    return false;
+  }
+  if (typeof event.prevEventHash !== "string" || !event.prevEventHash.trim()) return false;
+  if (typeof event.eventHash !== "string" || !event.eventHash.trim()) return false;
+  if (typeof event.scannerSummaryHash !== "string" || !event.scannerSummaryHash.trim()) return false;
+  if (typeof event.riskCardHash !== "string" || !event.riskCardHash.trim()) return false;
+  if (typeof event.diffHash !== "string" || !event.diffHash.trim()) return false;
+  if (!Array.isArray(event.testHashes) || !event.testHashes.every((item) => typeof item === "string")) {
+    return false;
+  }
+  if (!Array.isArray(event.approvals)) return false;
+  if (!event.approvals.every((item) => item && typeof item.approverId === "string" && typeof item.approvedAt === "string")) {
+    return false;
+  }
+  if (event.breakGlass !== undefined) {
+    if (!event.breakGlass || typeof event.breakGlass !== "object") return false;
+    if (typeof event.breakGlass.reason !== "string" || !event.breakGlass.reason.trim()) return false;
+    if (typeof event.breakGlass.expiresAt !== "string" || !event.breakGlass.expiresAt.trim()) return false;
+    if (event.breakGlass.postActionReviewRequired !== true) return false;
+  }
+  return true;
 }
 
 function hashEventPayload(event) {

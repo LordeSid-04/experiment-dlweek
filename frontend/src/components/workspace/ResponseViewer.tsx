@@ -23,13 +23,14 @@ type ResponseViewerProps = {
     evidence: string;
   }>;
   riskScore?: number | null;
-  riskLabel?: "LOW" | "MEDIUM" | "HIGH" | null;
+  riskLabel?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | null;
   findings?: DiffFinding[];
   riskDetails?: {
     topDrivers: string[];
     reasonCodes: string[];
     requiredControls: string[];
     blockReasons: string[];
+    evidenceQuotes?: string[];
   };
 };
 
@@ -89,6 +90,7 @@ export function ResponseViewer({
     reasonCodes: [],
     requiredControls: [],
     blockReasons: [],
+    evidenceQuotes: [],
   },
 }: ResponseViewerProps) {
   const streamAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -134,6 +136,8 @@ export function ResponseViewer({
                   ? "border-emerald-300/35 bg-emerald-300/12 text-emerald-100"
                   : riskLabel === "MEDIUM"
                     ? "border-amber-300/35 bg-amber-300/12 text-amber-100"
+                    : riskLabel === "CRITICAL"
+                      ? "border-fuchsia-300/40 bg-fuchsia-300/14 text-fuchsia-100"
                     : "border-rose-300/35 bg-rose-300/12 text-rose-100"
               }`}
             >
@@ -161,6 +165,11 @@ export function ResponseViewer({
               ) : null}
               {riskDetails.blockReasons.length ? (
                 <p className="mt-1">Block reasons: {riskDetails.blockReasons.join(" | ")}</p>
+              ) : null}
+              {riskDetails.evidenceQuotes?.length ? (
+                <p className="mt-1">
+                  Evidence quotes: {riskDetails.evidenceQuotes.slice(0, 3).join(" | ")}
+                </p>
               ) : null}
               {findings.length ? (
                 <p className="mt-1">Findings flagged: {findings.length}</p>

@@ -37,20 +37,16 @@ async function runOperatorAgent({ userRequest, diffArtifact }) {
     userPrompt,
     responseSchema: OPERATOR_RESPONSE_SCHEMA,
   });
-
-  const fallback = {
-    deployPlan: ["Deploy to staging", "Run smoke checks", "Gate on governor approval before production"],
-    rolloutSteps: ["10% canary", "50% rollout", "100% rollout with monitoring"],
-    rollbackPlan: ["Revert deployment artifact", "Replay last known-good config", "validate health + audit"],
-    readinessChecks: ["All tests green", "No blocked scanner findings", "Two-person approval present for high risk"],
-  };
+  if (!codex.parsed || typeof codex.parsed !== "object") {
+    throw new Error("OPERATOR returned invalid structured output.");
+  }
 
   return {
     artifact: {
-      deployPlan: toStringArray((codex.parsed || fallback).deployPlan, fallback.deployPlan),
-      rolloutSteps: toStringArray((codex.parsed || fallback).rolloutSteps, fallback.rolloutSteps),
-      rollbackPlan: toStringArray((codex.parsed || fallback).rollbackPlan, fallback.rollbackPlan),
-      readinessChecks: toStringArray((codex.parsed || fallback).readinessChecks, fallback.readinessChecks),
+      deployPlan: toStringArray(codex.parsed.deployPlan, []),
+      rolloutSteps: toStringArray(codex.parsed.rolloutSteps, []),
+      rollbackPlan: toStringArray(codex.parsed.rollbackPlan, []),
+      readinessChecks: toStringArray(codex.parsed.readinessChecks, []),
     },
     proof: codex.proof,
     modelText: codex.text,

@@ -2,6 +2,7 @@ const { sha256 } = require("./hashing");
 const { appendLedgerEvent, buildLedgerEvent } = require("./evidence-ledger");
 const { runSafetyScanners, scanTextForSecrets } = require("./scanners");
 const { computeRiskAssessment } = require("./risk-engine");
+const { decideGate } = require("./policy-engine");
 
 function extractJsonObject(text) {
   const start = text.indexOf("{");
@@ -482,6 +483,9 @@ function applyScopedFix({
 async function runDirectAssistPath({
   prompt,
   actor = "demo-user",
+  confidenceMode = "pair",
+  approvals = [],
+  breakGlass,
   confidencePercent,
   projectFiles = {},
   emitEvent,
@@ -510,80 +514,29 @@ async function runDirectAssistPath({
     message: "Running high-quality direct model response path...",
   });
 
-  const geminiKey = process.env.GEMINI_API_KEY;
   const openAiKey = process.env.OPENAI_API_KEY;
   const timeoutMs = Number(process.env.DIRECT_MODEL_TIMEOUT_MS || 20000);
-
-  let modelResult;
-  try {
-    if (level === 0 && geminiKey) {
-      modelResult = await callGemini({
-        model: process.env.GEMINI_MODEL_ASSIST || "gemini-2.0-flash",
-        systemPrompt,
-        userPrompt,
-        timeoutMs,
-        key: geminiKey,
-      });
-    } else if (openAiKey) {
-      modelResult = await callOpenAI({
-        model:
-          level === 0
-            ? process.env.OPENAI_ASSIST_MODEL || process.env.OPENAI_FAST_MODEL || "gpt-4o-mini"
-            : process.env.OPENAI_PAIR_MODEL || "gpt-4.1-mini",
-        systemPrompt,
-        userPrompt,
-        timeoutMs,
-        key: openAiKey,
-      });
-    } else if (geminiKey) {
-      modelResult = await callGemini({
-        model:
-          level === 0
-            ? process.env.GEMINI_MODEL_ASSIST || "gemini-2.0-flash"
-            : process.env.GEMINI_MODEL_PAIR || "gemini-2.5-flash",
-        systemPrompt,
-        userPrompt,
-        timeoutMs,
-        key: geminiKey,
-      });
-    } else {
-      modelResult = fallbackDirectResponse({
-        prompt,
-        touchedFiles,
-        level,
-        reason: "no model key configured",
-      });
-    }
-  } catch (error) {
-    modelResult = fallbackDirectResponse({
-      prompt,
-      touchedFiles,
-      level,
-      reason: error?.message || "model call failed",
-    });
+  if (!openAiKey) {
+    throw new Error(
+      "OPENAI_API_KEY is missing. Configure backend OPENAI_API_KEY to enable companion and pair mode generation."
+    );
   }
+  const modelResult = await callOpenAI({
+    model:
+      level === 0
+        ? process.env.OPENAI_ASSIST_MODEL || process.env.OPENAI_FAST_MODEL || "gpt-4o-mini"
+        : process.env.OPENAI_PAIR_MODEL || process.env.OPENAI_FAST_MODEL || "gpt-4.1-mini",
+    systemPrompt,
+    userPrompt,
+    timeoutMs,
+    key: openAiKey,
+  });
 
   const parsed = modelResult.parsed || extractJsonObject(modelResult.text || "");
   let normalized = normalizeDirectPayload(parsed, touchedFiles);
   const scope = extractScopeFromPrompt(prompt);
-  const hasMaterializedPatch = Boolean(
-    (normalized.unifiedDiff || "").trim() ||
-      (normalized.generatedFiles && Object.keys(normalized.generatedFiles).length)
-  );
-  if (!hasMaterializedPatch && isScopedFixIntent(scope.userRequest, scope.selectedSnippet)) {
-    const heuristic = buildHeuristicSelectionFix(scope.selectedSnippet, scope.userRequest);
-    const llmCodeBlock = extractCodeBlock(normalized.assistantReply);
-    const replacementSnippet = heuristic?.replacement || llmCodeBlock;
-    if (replacementSnippet) {
-      normalized = applyScopedFix({
-        normalized,
-        projectFiles,
-        selectedFile: scope.selectedFile,
-        selectedSnippet: scope.selectedSnippet,
-        replacementSnippet,
-        note: heuristic?.note || "Used the model-suggested replacement snippet.",
-      });
-    }
+  if (scope.selectedSnippet && !String(normalized.assistantReply || "").includes(scope.selectedSnippet)) {
+    normalized.assistantReply = `${normalized.assistantReply}\n\nScope note: response is constrained to selected text and file context.`;
   }
   const effectiveUnifiedDiff = String(normalized.unifiedDiff || "").trim()
     || buildUnifiedDiffFromGeneratedFiles(normalized.generatedFiles || {});
@@ -633,13 +586,21 @@ async function runDirectAssistPath({
   ];
   const riskScore = assessment.riskScore;
   const riskTier = assessment.riskTier;
+  const gateDecision = decideGate({
+    confidenceMode,
+    artifactType: "diff",
+    riskScore,
+    findings,
+    approvals,
+    breakGlass,
+  });
   const timeline = [
     {
       id: `step-direct-${level}`,
       agentRole: "Developer",
       artifactType: "diff",
       riskScore,
-      gateDecision: "ALLOWED",
+      gateDecision: gateDecision.gateDecision,
       timestamp: new Date().toISOString(),
       linkedFindingIds: findings.map((item) => item.id),
     },
@@ -670,8 +631,8 @@ async function runDirectAssistPath({
     resourcesTouched,
     diffText: normalized.unifiedDiff || "",
     testOutputs: [],
-    approvals: [],
-    breakGlass: undefined,
+    approvals,
+    breakGlass,
     scannerSummary: mapFindingsByCategory(findings),
     riskCard: assessment.riskCard,
   });
@@ -700,12 +661,12 @@ async function runDirectAssistPath({
       },
     },
     gate: {
-      gateDecision: "ALLOWED",
+      gateDecision: gateDecision.gateDecision,
       riskScore,
       riskTier,
-      blockReasons: [],
-      approvalsNeeded: [],
-      reasonCodes: ["DIRECT_MODEL_NO_AGENT"],
+      blockReasons: gateDecision.blockReasons,
+      approvalsNeeded: gateDecision.approvalsNeeded,
+      reasonCodes: gateDecision.reasonCodes,
       findingsByCategory: mapFindingsByCategory(findings),
       riskFactors: assessment.factors,
       riskCard: {
@@ -713,7 +674,7 @@ async function runDirectAssistPath({
         topDrivers: [...assessment.riskCard.topDrivers, ...normalized.citations].slice(0, 5),
       },
     },
-    blocked: false,
+    blocked: gateDecision.gateDecision === "BLOCKED",
   };
   emit({
     type: "run_completed",

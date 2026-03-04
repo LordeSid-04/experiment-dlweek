@@ -1,5 +1,14 @@
 const { sha256 } = require("./hashing");
 
+class ModelProviderError extends Error {
+  constructor(code, message, status) {
+    super(message);
+    this.name = "ModelProviderError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 function extractFencedJson(text) {
   const fencedMatch = String(text || "").match(/```(?:json)?\s*([\s\S]*?)```/i);
   return fencedMatch?.[1]?.trim() || "";
@@ -152,88 +161,124 @@ function resolveCodexModel() {
   return process.env.OPENAI_CODEX_MODEL || process.env.OPENAI_MODEL || "gpt-5-codex";
 }
 
+function resolveOpenAiErrorCode(status) {
+  if (status === 401) return "INVALID_API_KEY";
+  if (status === 403) return "MODEL_NOT_PERMITTED";
+  if (status === 404) return "MODEL_NOT_FOUND";
+  if (status === 408) return "TIMEOUT";
+  if (status === 429) return "RATE_LIMITED";
+  if (status >= 500) return "MODEL_UNAVAILABLE";
+  return "MODEL_ERROR";
+}
+
+function parseRetryAfterMs(response) {
+  const header = response.headers.get("retry-after");
+  if (!header) return 0;
+  const asNumber = Number(header);
+  if (Number.isFinite(asNumber)) return Math.max(0, asNumber * 1000);
+  const retryDate = Date.parse(header);
+  if (!Number.isFinite(retryDate)) return 0;
+  return Math.max(0, retryDate - Date.now());
+}
+
 async function callCodex({ agentRole, systemPrompt, userPrompt, responseSchema }) {
   const now = new Date().toISOString();
   const model = resolveCodexModel();
   const key = process.env.OPENAI_API_KEY;
 
   if (!key) {
-    const syntheticId = `harness-${sha256(`${agentRole}:${userPrompt}`).slice(0, 12)}`;
-    return {
-      text: JSON.stringify({ note: "OPENAI_API_KEY missing, using harness fallback." }),
-      parsed: null,
-      proof: {
-        provider: "codex-harness",
-        model,
-        responseId: syntheticId,
-        timestamp: now,
-        agentRole,
-      },
-    };
+    throw new ModelProviderError(
+      "INVALID_API_KEY",
+      "OPENAI_API_KEY is missing. Add a valid API key in backend environment.",
+      401
+    );
   }
 
-  try {
-    const controller = new AbortController();
-    const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 45000);
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 45000);
+  const maxAttempts = 2;
+  let attempt = 0;
 
-    let response;
+  while (attempt < maxAttempts) {
+    attempt += 1;
     try {
-      response = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+      let response;
+      try {
+        response = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${key}`,
+          },
+          signal: controller.signal,
+          body: JSON.stringify(toResponseBody({ model, systemPrompt, userPrompt, responseSchema })),
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (!response.ok) {
+        const code = resolveOpenAiErrorCode(response.status);
+        const retryable = response.status === 429 || response.status >= 500;
+        if (retryable && attempt < maxAttempts) {
+          const waitMs = Math.max(250, parseRetryAfterMs(response));
+          // A short bounded wait keeps strict mode deterministic while tolerating transient provider blips.
+          await new Promise((resolve) => setTimeout(resolve, Math.min(waitMs, 2000)));
+          continue;
+        }
+        throw new ModelProviderError(
+          code,
+          `OpenAI responses API returned ${response.status} for model ${model}.`,
+          response.status
+        );
+      }
+
+      const payload = await response.json();
+      const text = extractOutputText(payload);
+      const parsed = extractOutputParsed(payload) || parseModelJson(text);
+
+      return {
+        text,
+        parsed,
+        proof: {
+          provider: "openai-api",
+          model,
+          responseId: payload.id || `openai-${sha256(text).slice(0, 12)}`,
+          timestamp: now,
+          agentRole,
         },
-        signal: controller.signal,
-        body: JSON.stringify(toResponseBody({ model, systemPrompt, userPrompt, responseSchema })),
-      });
-    } finally {
-      clearTimeout(timeout);
+      };
+    } catch (error) {
+      if (error instanceof ModelProviderError) {
+        throw error;
+      }
+      const message = String(error?.message || "");
+      const isAbort = error?.name === "AbortError" || /aborted|timeout/i.test(message);
+      if (isAbort) {
+        throw new ModelProviderError(
+          "TIMEOUT",
+          `OpenAI request timed out after ${timeoutMs}ms for model ${model}.`,
+          408
+        );
+      }
+      throw new ModelProviderError("MODEL_UNAVAILABLE", `OpenAI request failed: ${message}`, 503);
     }
-
-    if (!response.ok) {
-      throw new Error(`OpenAI API error ${response.status}`);
-    }
-
-    const payload = await response.json();
-    const text = extractOutputText(payload);
-    const parsed = extractOutputParsed(payload) || parseModelJson(text);
-
-    return {
-      text,
-      parsed,
-      proof: {
-        provider: "openai-api",
-        model,
-        responseId: payload.id || `openai-${sha256(text).slice(0, 12)}`,
-        timestamp: now,
-        agentRole,
-      },
-    };
-  } catch (error) {
-    const fallbackId = `harness-${sha256(`${agentRole}:${now}`).slice(0, 12)}`;
-    return {
-      text: JSON.stringify({ note: `OpenAI call failed (${error.message}); harness fallback used.` }),
-      parsed: null,
-      proof: {
-        provider: "codex-harness",
-        model,
-        responseId: fallbackId,
-        timestamp: now,
-        agentRole,
-      },
-    };
   }
+
+  throw new ModelProviderError("MODEL_UNAVAILABLE", "OpenAI request could not be completed.", 503);
 }
 
 module.exports = {
   callCodex,
+  ModelProviderError,
   __test: {
     extractBalancedJson,
     parseModelJson,
     extractOutputText,
     extractOutputParsed,
     resolveCodexModel,
+    resolveOpenAiErrorCode,
   },
 };

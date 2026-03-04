@@ -3,10 +3,10 @@ import { getGovernanceConfig, getMode, clampPercent } from "./governance";
 describe("governance helpers", () => {
   it("maps percentage ranges to expected modes", () => {
     expect(getMode(0)).toBe("assist");
-    expect(getMode(29)).toBe("assist");
-    expect(getMode(30)).toBe("pair");
-    expect(getMode(70)).toBe("pair");
-    expect(getMode(71)).toBe("autopilot");
+    expect(getMode(25)).toBe("assist");
+    expect(getMode(26)).toBe("pair");
+    expect(getMode(75)).toBe("pair");
+    expect(getMode(76)).toBe("autopilot");
     expect(getMode(100)).toBe("autopilot");
   });
 

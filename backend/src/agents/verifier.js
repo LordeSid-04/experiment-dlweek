@@ -29,22 +29,15 @@ async function runVerifierAgent({ userRequest, diffArtifact }) {
     userPrompt,
     responseSchema: VERIFIER_RESPONSE_SCHEMA,
   });
-
-  const fallback = {
-    testsToAdd: [
-      "orchestrator pipeline order test",
-      "governor scanner gate decision test",
-      "ledger append-only audit test",
-    ],
-    commands: ["npm test", "npm run lint"],
-    dryRunResults: ["lint: skipped in demo backend", "unit: pending run by user/CI"],
-  };
+  if (!codex.parsed || typeof codex.parsed !== "object") {
+    throw new Error("VERIFIER returned invalid structured output.");
+  }
 
   return {
     artifact: {
-      testsToAdd: toStringArray((codex.parsed || fallback).testsToAdd, fallback.testsToAdd),
-      commands: toStringArray((codex.parsed || fallback).commands, fallback.commands),
-      dryRunResults: toStringArray((codex.parsed || fallback).dryRunResults, fallback.dryRunResults),
+      testsToAdd: toStringArray(codex.parsed.testsToAdd, []),
+      commands: toStringArray(codex.parsed.commands, []),
+      dryRunResults: toStringArray(codex.parsed.dryRunResults, []),
     },
     proof: codex.proof,
     modelText: codex.text,

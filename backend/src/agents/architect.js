@@ -63,25 +63,12 @@ async function runArchitectAgent({ userRequest, currentFiles = {} }) {
     userPrompt,
     responseSchema: ARCHITECT_RESPONSE_SCHEMA,
   });
-
-  const fallback = {
-    systemComponents: ["orchestrator", "agent adapters", "risk engine", "policy gate", "audit ledger"],
-    filesToTouch: ["backend/src/orchestrator.js", "backend/src/agents/*.js", "backend/src/lib/*.js"],
-    constraints: [
-      "Generate unified diff artifacts, not direct write actions",
-      "Capture Codex proof metadata on every model call",
-      "Use append-only evidence ledger events",
-    ],
-    riskForecast: {
-      pii: false,
-      auth: true,
-      destructiveOps: false,
-      notes: ["Security scanner and risk scoring required before merge/deploy gates."],
-    },
-  };
+  if (!codex.parsed || typeof codex.parsed !== "object") {
+    throw new Error("ARCHITECT returned invalid structured output.");
+  }
 
   return {
-    artifact: normalizeArchitectArtifact(codex.parsed || fallback),
+    artifact: normalizeArchitectArtifact(codex.parsed),
     proof: codex.proof,
     modelText: codex.text,
   };

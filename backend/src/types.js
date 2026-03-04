@@ -41,7 +41,7 @@
  * @property {string[]} approvalsNeeded
  * @property {string[]} reasonCodes
  * @property {{impact:number,exploitability:number,uncertainty:number,governanceGap:number}} riskFactors
- * @property {{topDrivers:string[],requiredControls:string[],rationale:string}} riskCard
+ * @property {{topDrivers:string[],requiredControls:string[],rationale:string,evidenceQuotes?:string[]}} riskCard
  * @property {Record<string, number>} findingsByCategory
  *
  * @typedef {Object} LedgerEvent

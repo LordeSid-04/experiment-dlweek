@@ -61,6 +61,16 @@
         "postActionReviewRequired": { "const": true }
       },
       "additionalProperties": false
+    },
+    "riskCard": {
+      "type": "object",
+      "properties": {
+        "topDrivers": { "type": "array", "items": { "type": "string" } },
+        "requiredControls": { "type": "array", "items": { "type": "string" } },
+        "rationale": { "type": "string" },
+        "evidenceQuotes": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": false
