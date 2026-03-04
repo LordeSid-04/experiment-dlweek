@@ -157,8 +157,22 @@ function toResponseBody({ model, systemPrompt, userPrompt, responseSchema }) {
   return body;
 }
 
+function resolveCodexModelCandidates() {
+  const ordered = [
+    process.env.OPENAI_CODEX_MODEL,
+    process.env.OPENAI_MODEL,
+    process.env.OPENAI_AUTOPILOT_FALLBACK_MODEL,
+    process.env.OPENAI_PAIR_MODEL,
+    process.env.OPENAI_FAST_MODEL,
+    "gpt-4.1-mini",
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(ordered));
+}
+
 function resolveCodexModel() {
-  return process.env.OPENAI_CODEX_MODEL || process.env.OPENAI_MODEL || "gpt-5-codex";
+  return resolveCodexModelCandidates()[0];
 }
 
 function resolveOpenAiErrorCode(status) {
@@ -183,7 +197,7 @@ function parseRetryAfterMs(response) {
 
 async function callCodex({ agentRole, systemPrompt, userPrompt, responseSchema }) {
   const now = new Date().toISOString();
-  const model = resolveCodexModel();
+  const models = resolveCodexModelCandidates();
   const key = process.env.OPENAI_API_KEY;
 
   if (!key) {
@@ -196,77 +210,110 @@ async function callCodex({ agentRole, systemPrompt, userPrompt, responseSchema }
 
   const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 45000);
   const maxAttempts = 2;
-  let attempt = 0;
+  let lastError = null;
 
-  while (attempt < maxAttempts) {
-    attempt += 1;
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+    const model = models[modelIndex];
+    let attempt = 0;
+    let schemaEnabled = Boolean(responseSchema?.schema);
 
-      let response;
+    while (attempt < maxAttempts) {
+      attempt += 1;
       try {
-        response = await fetch("https://api.openai.com/v1/responses", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${key}`,
-          },
-          signal: controller.signal,
-          body: JSON.stringify(toResponseBody({ model, systemPrompt, userPrompt, responseSchema })),
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-      if (!response.ok) {
-        const code = resolveOpenAiErrorCode(response.status);
-        const retryable = response.status === 429 || response.status >= 500;
-        if (retryable && attempt < maxAttempts) {
-          const waitMs = Math.max(250, parseRetryAfterMs(response));
-          // A short bounded wait keeps strict mode deterministic while tolerating transient provider blips.
-          await new Promise((resolve) => setTimeout(resolve, Math.min(waitMs, 2000)));
-          continue;
+        let response;
+        try {
+          response = await fetch("https://api.openai.com/v1/responses", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${key}`,
+            },
+            signal: controller.signal,
+            body: JSON.stringify(
+              toResponseBody({
+                model,
+                systemPrompt,
+                userPrompt,
+                responseSchema: schemaEnabled ? responseSchema : undefined,
+              })
+            ),
+          });
+        } finally {
+          clearTimeout(timeout);
         }
-        throw new ModelProviderError(
-          code,
-          `OpenAI responses API returned ${response.status} for model ${model}.`,
-          response.status
-        );
-      }
 
-      const payload = await response.json();
-      const text = extractOutputText(payload);
-      const parsed = extractOutputParsed(payload) || parseModelJson(text);
+        if (!response.ok) {
+          const code = resolveOpenAiErrorCode(response.status);
+          const retryable = response.status === 429 || response.status >= 500;
+          if (retryable && attempt < maxAttempts) {
+            const waitMs = Math.max(250, parseRetryAfterMs(response));
+            await new Promise((resolve) => setTimeout(resolve, Math.min(waitMs, 2000)));
+            continue;
+          }
+          if (response.status === 400 && schemaEnabled && responseSchema?.schema) {
+            schemaEnabled = false;
+            attempt = 0;
+            continue;
+          }
 
-      return {
-        text,
-        parsed,
-        proof: {
-          provider: "openai-api",
-          model,
-          responseId: payload.id || `openai-${sha256(text).slice(0, 12)}`,
-          timestamp: now,
-          agentRole,
-        },
-      };
-    } catch (error) {
-      if (error instanceof ModelProviderError) {
-        throw error;
+          const modelError = new ModelProviderError(
+            code,
+            `OpenAI responses API returned ${response.status} for model ${model}.`,
+            response.status
+          );
+          lastError = modelError;
+          const canTryNextModel =
+            (response.status === 400 || response.status === 403 || response.status === 404) &&
+            modelIndex < models.length - 1;
+          if (canTryNextModel) {
+            break;
+          }
+          throw modelError;
+        }
+
+        const payload = await response.json();
+        const text = extractOutputText(payload);
+        const parsed = extractOutputParsed(payload) || parseModelJson(text);
+
+        return {
+          text,
+          parsed,
+          proof: {
+            provider: "openai-api",
+            model,
+            responseId: payload.id || `openai-${sha256(text).slice(0, 12)}`,
+            timestamp: now,
+            agentRole,
+          },
+        };
+      } catch (error) {
+        if (error instanceof ModelProviderError) {
+          throw error;
+        }
+        const message = String(error?.message || "");
+        const isAbort = error?.name === "AbortError" || /aborted|timeout/i.test(message);
+        if (isAbort) {
+          throw new ModelProviderError(
+            "TIMEOUT",
+            `OpenAI request timed out after ${timeoutMs}ms for model ${model}.`,
+            408
+          );
+        }
+        throw new ModelProviderError("MODEL_UNAVAILABLE", `OpenAI request failed: ${message}`, 503);
       }
-      const message = String(error?.message || "");
-      const isAbort = error?.name === "AbortError" || /aborted|timeout/i.test(message);
-      if (isAbort) {
-        throw new ModelProviderError(
-          "TIMEOUT",
-          `OpenAI request timed out after ${timeoutMs}ms for model ${model}.`,
-          408
-        );
-      }
-      throw new ModelProviderError("MODEL_UNAVAILABLE", `OpenAI request failed: ${message}`, 503);
     }
   }
 
+  if (lastError) {
+    throw new ModelProviderError(
+      lastError.code,
+      `${lastError.message} Attempted models: ${models.join(", ")}.`,
+      lastError.status
+    );
+  }
   throw new ModelProviderError("MODEL_UNAVAILABLE", "OpenAI request could not be completed.", 503);
 }
 
@@ -279,6 +326,7 @@ module.exports = {
     extractOutputText,
     extractOutputParsed,
     resolveCodexModel,
+    resolveCodexModelCandidates,
     resolveOpenAiErrorCode,
   },
 };

@@ -46,7 +46,37 @@ function tokenize(text) {
     .filter((token) => token.length >= 3);
 }
 
-function buildProjectContext(prompt, projectFiles) {
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function getDirectModelTuning(level) {
+  const assist = level === 0;
+  return {
+    maxContextFiles: parsePositiveInt(
+      assist ? process.env.DIRECT_CONTEXT_FILES_ASSIST : process.env.DIRECT_CONTEXT_FILES_PAIR,
+      assist ? 2 : 3
+    ),
+    maxContextLines: parsePositiveInt(
+      assist ? process.env.DIRECT_CONTEXT_LINES_ASSIST : process.env.DIRECT_CONTEXT_LINES_PAIR,
+      assist ? 70 : 100
+    ),
+    contentTokenScanChars: parsePositiveInt(
+      assist ? process.env.DIRECT_TOKEN_SCAN_CHARS_ASSIST : process.env.DIRECT_TOKEN_SCAN_CHARS_PAIR,
+      assist ? 1000 : 1400
+    ),
+    maxOutputTokens: parsePositiveInt(
+      assist ? process.env.DIRECT_MAX_OUTPUT_TOKENS_ASSIST : process.env.DIRECT_MAX_OUTPUT_TOKENS_PAIR,
+      assist ? 600 : 900
+    ),
+  };
+}
+
+function buildProjectContext(prompt, projectFiles, tuning) {
   if (!projectFiles || typeof projectFiles !== "object") {
     return { contextText: "No project files were provided.", touchedFiles: [] };
   }
@@ -59,7 +89,7 @@ function buildProjectContext(prompt, projectFiles) {
   const ranked = entries
     .map(([path, content]) => {
       const normalizedContent = String(content || "");
-      const tokens = new Set(tokenize(`${path} ${normalizedContent.slice(0, 1600)}`));
+      const tokens = new Set(tokenize(`${path} ${normalizedContent.slice(0, tuning.contentTokenScanChars)}`));
       let score = 0;
       for (const token of promptTokens) {
         if (tokens.has(token)) score += 1;
@@ -67,11 +97,11 @@ function buildProjectContext(prompt, projectFiles) {
       return { path, content: normalizedContent, score };
     })
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
-    .slice(0, 4);
+    .slice(0, tuning.maxContextFiles);
 
   const touchedFiles = ranked.map((item) => item.path);
   const contextParts = ranked.map((item) => {
-    const lines = item.content.split("\n").slice(0, 140).join("\n");
+    const lines = item.content.split("\n").slice(0, tuning.maxContextLines).join("\n");
     return [`FILE: ${item.path}`, "```", lines || "(empty file)", "```"].join("\n");
   });
   const contextText = contextParts.length
@@ -109,24 +139,27 @@ function buildSystemPrompt(level) {
 }
 
 function buildUserPrompt({ prompt, contextText, level }) {
-  return JSON.stringify(
-    {
-      confidenceLevel: level,
-      userRequest: prompt,
-      requirements: [
-        "Be concrete and context-grounded.",
-        "Give short, actionable steps first.",
-        "For code edits, include a concise unified diff preview when possible.",
-        "Include 1-3 citation bullets describing which files/context informed the answer.",
-      ],
-      retrievedProjectContext: contextText,
-    },
-    null,
-    2
-  );
+  const requirements =
+    level === 0
+      ? [
+          "Answer fast with practical fixes.",
+          "Keep response concise and scoped to request/context.",
+          "Include corrected snippet when relevant.",
+        ]
+      : [
+          "Answer fast with implementation-ready guidance.",
+          "Prefer concise unified diff and scoped file edits.",
+          "Keep rationale short and actionable.",
+        ];
+  return JSON.stringify({
+    confidenceLevel: level,
+    userRequest: prompt,
+    requirements,
+    retrievedProjectContext: contextText,
+  });
 }
 
-async function callOpenAI({ model, systemPrompt, userPrompt, timeoutMs, key }) {
+async function callOpenAI({ model, systemPrompt, userPrompt, timeoutMs, key, maxOutputTokens }) {
   const now = new Date().toISOString();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -142,7 +175,7 @@ async function callOpenAI({ model, systemPrompt, userPrompt, timeoutMs, key }) {
         signal: controller.signal,
         body: JSON.stringify({
           model,
-          max_output_tokens: 1500,
+          max_output_tokens: maxOutputTokens,
           input: [
             {
               role: "system",
@@ -523,7 +556,8 @@ async function runDirectAssistPath({
     throw new Error("Direct assist path only supports confidence levels 0 and 50.");
   }
   const runId = `run-${Date.now()}`;
-  const { contextText, touchedFiles } = buildProjectContext(prompt, projectFiles);
+  const tuning = getDirectModelTuning(level);
+  const { contextText, touchedFiles } = buildProjectContext(prompt, projectFiles, tuning);
   const systemPrompt = buildSystemPrompt(level);
   const userPrompt = buildUserPrompt({ prompt, contextText, level });
 
@@ -557,6 +591,7 @@ async function runDirectAssistPath({
     userPrompt,
     timeoutMs,
     key: openAiKey,
+    maxOutputTokens: tuning.maxOutputTokens,
   });
 
   const parsed = modelResult.parsed || extractJsonObject(modelResult.text || "");
@@ -714,4 +749,5 @@ module.exports = {
   runDirectAssistPath,
   shouldUseDirectModelPath,
   normalizeConfidenceLevel,
+  getDirectModelTuning,
 };

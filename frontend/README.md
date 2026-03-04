@@ -92,7 +92,13 @@ If quality is low or runs fail, check backend configuration first:
    - `OPENAI_ASSIST_MODEL`
    - `OPENAI_PAIR_MODEL`
    - `OPENAI_CODEX_MODEL`
+   - optional `OPENAI_AUTOPILOT_FALLBACK_MODEL` for 100% mode model fallback on provider/model compatibility errors
 3. Increase timeout if needed (`OPENAI_FAST_TIMEOUT_MS`, `DIRECT_MODEL_TIMEOUT_MS`).
+   - For faster direct assist/pair responses, tune context/output limits:
+     - `DIRECT_CONTEXT_FILES_ASSIST`, `DIRECT_CONTEXT_LINES_ASSIST`
+     - `DIRECT_CONTEXT_FILES_PAIR`, `DIRECT_CONTEXT_LINES_PAIR`
+     - `DIRECT_TOKEN_SCAN_CHARS_ASSIST`, `DIRECT_TOKEN_SCAN_CHARS_PAIR`
+     - `DIRECT_MAX_OUTPUT_TOKENS_ASSIST`, `DIRECT_MAX_OUTPUT_TOKENS_PAIR`
 4. Backend now returns explicit model errors such as:
    - `INVALID_API_KEY`
    - `MODEL_NOT_PERMITTED`
