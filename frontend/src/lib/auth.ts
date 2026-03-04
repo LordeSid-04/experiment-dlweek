@@ -71,15 +71,12 @@ export function resolveBackendBaseUrl(runtime?: BackendUrlRuntime): string {
   if (isPrivateIpv4) {
     return `${protocol}//${hostname}:4000`;
   }
-  if (origin) {
-    return origin.replace(/\/+$/, "");
-  }
   return "http://localhost:4000";
 }
 
 function networkErrorMessage(action: "signup" | "login", baseUrl: string): string {
   const actionLabel = action === "signup" ? "Sign up" : "Login";
-  return `${actionLabel} could not reach the backend at ${baseUrl}. Set NEXT_PUBLIC_BACKEND_URL to a reachable backend URL (LAN IP for local testing, or your deployed backend API URL).`;
+  return `${actionLabel} could not reach the backend at ${baseUrl}. Set NEXT_PUBLIC_BACKEND_URL to your deployed backend API URL (required on Vercel) or to a reachable LAN backend in local testing.`;
 }
 
 async function readAuthPayload<T extends object>(response: Response): Promise<T | null> {
