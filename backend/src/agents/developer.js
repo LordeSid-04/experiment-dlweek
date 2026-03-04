@@ -1229,6 +1229,14 @@ function buildAutopilotRecoveryArtifact(userRequest, intent) {
   };
 }
 
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function scoreArtifactQualityByIntent(prompt, artifact, intent) {
   if (intent === "website") {
     return scoreWebsiteArtifactQuality(prompt, artifact);
@@ -1507,9 +1515,22 @@ Code edit enforcement:
     normalizedArtifact = normalizeDeveloperArtifact(codex.parsed || fallback, userRequest, codex.text);
   }
 
-  const maxRefinementPasses = autopilotBuildMode ? 3 : 2;
+  const maxRefinementPasses = parsePositiveInt(
+    autopilotBuildMode
+      ? process.env.DEVELOPER_MAX_REFINEMENT_PASSES_AUTOPILOT
+      : process.env.DEVELOPER_MAX_REFINEMENT_PASSES_STANDARD,
+    autopilotBuildMode ? 2 : 2
+  );
+  const refinementBudgetMs = parsePositiveInt(
+    process.env.DEVELOPER_REFINEMENT_BUDGET_MS,
+    autopilotBuildMode ? 55000 : 30000
+  );
+  const refinementStartedAt = Date.now();
   let pass = 0;
   while (buildMode && pass < maxRefinementPasses) {
+    if (Date.now() - refinementStartedAt > refinementBudgetMs) {
+      break;
+    }
     const qualityGateFailed =
       !isArtifactGroundedToPrompt(userRequest, normalizedArtifact) ||
       hasUnexpectedPortfolioTemplate(userRequest, normalizedArtifact) ||

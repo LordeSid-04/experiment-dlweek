@@ -64,6 +64,7 @@ Additional route:
 - `0% (Assist)`: OpenAI companion mode for scoped suggestions and targeted code guidance only.
 - `50% (Pair)`: OpenAI pair-programmer mode for partial code generation/fixes with governance gates.
 - `100% (Autopilot)`: full agentic pipeline (Architect/Developer/Verifier/Operator/Governor).
+- `100% (Autopilot)` now emits periodic developer progress updates during long generations and uses deterministic recovery scaffolds if strict quality checks fail after refinement budget.
 - No heuristic/harness content fallback is used for generation paths; model failures now return explicit error codes and remediation guidance.
 
 ## Safety Scanner + Risk Engine

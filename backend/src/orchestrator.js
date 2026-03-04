@@ -232,6 +232,21 @@ function emitControlRequirements(emit, artifact) {
   });
 }
 
+function startStageProgressTicker(emit, { agentRole, stage, message, intervalMs = 8000 }) {
+  if (!emit || typeof emit !== "function") {
+    return () => {};
+  }
+  const timer = setInterval(() => {
+    emit({
+      type: "agent_output",
+      agentRole,
+      stage,
+      content: message,
+    });
+  }, intervalMs);
+  return () => clearInterval(timer);
+}
+
 async function executePipeline({
   prompt,
   actor = "demo-user",
@@ -335,6 +350,11 @@ async function executePipeline({
     stage: "diff",
     message: "Generating implementation patch and starter files...",
   });
+  const stopDeveloperProgress = startStageProgressTicker(emit, {
+    agentRole: "DEVELOPER",
+    stage: "diff-progress",
+    message: "Still generating implementation files...",
+  });
   let streamedDeveloperBuffer = "";
   let lastDeveloperDeltaAt = 0;
   const emitDeveloperDelta = (delta) => {
@@ -355,13 +375,18 @@ async function executePipeline({
     streamedDeveloperBuffer = "";
     lastDeveloperDeltaAt = now;
   };
-  let developer = await runDeveloperAgent({
-    userRequest: prompt,
-    planArtifact: architect.artifact,
-    currentFiles: projectFiles,
-    confidenceMode,
-    onModelDelta: emitEvent ? emitDeveloperDelta : undefined,
-  });
+  let developer;
+  try {
+    developer = await runDeveloperAgent({
+      userRequest: prompt,
+      planArtifact: architect.artifact,
+      currentFiles: projectFiles,
+      confidenceMode,
+      onModelDelta: emitEvent ? emitDeveloperDelta : undefined,
+    });
+  } finally {
+    stopDeveloperProgress();
+  }
   if (streamedDeveloperBuffer.trim()) {
     emit({
       type: "agent_output",
@@ -379,6 +404,11 @@ async function executePipeline({
       ? Object.keys(developer.artifact.generatedFiles).length
       : 0;
   if (isBuildPrompt && generatedFilesCount < 3 && !hasUsableProjectScaffold(developer.artifact)) {
+    const stopContinuationProgress = startStageProgressTicker(emit, {
+      agentRole: "DEVELOPER",
+      stage: "diff-continuation-progress",
+      message: "Running continuation pass for missing files...",
+    });
     const continuation = await runDeveloperAgent({
       userRequest: `${prompt}\n\nContinue implementation to fully satisfy this request. Add missing files and complete project structure.`,
       planArtifact: architect.artifact,
@@ -388,6 +418,8 @@ async function executePipeline({
       },
       confidenceMode,
       onModelDelta: emitEvent ? emitDeveloperDelta : undefined,
+    }).finally(() => {
+      stopContinuationProgress();
     });
     developer = {
       ...continuation,

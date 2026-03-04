@@ -286,7 +286,7 @@ async function callCodex({ agentRole, systemPrompt, userPrompt, responseSchema, 
     );
   }
 
-  const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 45000);
+  const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 30000);
   const maxAttempts = 2;
   let lastError = null;
 
