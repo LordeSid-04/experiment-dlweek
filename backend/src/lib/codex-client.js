@@ -291,18 +291,37 @@ async function callCodex({ agentRole, systemPrompt, userPrompt, responseSchema }
         };
       } catch (error) {
         if (error instanceof ModelProviderError) {
+          lastError = error;
+          const canTryNextModel =
+            modelIndex < models.length - 1 &&
+            ["TIMEOUT", "MODEL_UNAVAILABLE", "MODEL_NOT_PERMITTED", "MODEL_NOT_FOUND", "MODEL_ERROR"].includes(
+              error.code
+            );
+          if (canTryNextModel) {
+            break;
+          }
           throw error;
         }
         const message = String(error?.message || "");
         const isAbort = error?.name === "AbortError" || /aborted|timeout/i.test(message);
         if (isAbort) {
-          throw new ModelProviderError(
+          const timeoutError = new ModelProviderError(
             "TIMEOUT",
             `OpenAI request timed out after ${timeoutMs}ms for model ${model}.`,
             408
           );
+          lastError = timeoutError;
+          if (modelIndex < models.length - 1) {
+            break;
+          }
+          throw timeoutError;
         }
-        throw new ModelProviderError("MODEL_UNAVAILABLE", `OpenAI request failed: ${message}`, 503);
+        const unavailableError = new ModelProviderError("MODEL_UNAVAILABLE", `OpenAI request failed: ${message}`, 503);
+        lastError = unavailableError;
+        if (modelIndex < models.length - 1) {
+          break;
+        }
+        throw unavailableError;
       }
     }
   }
