@@ -444,6 +444,9 @@ function isCompanyWebsitePrompt(prompt) {
 
 function detectBuildIntent(prompt) {
   const text = String(prompt || "").toLowerCase();
+  if (/(crm|customer relationship|clients?|leads?|pipeline)/i.test(text)) {
+    return "crm";
+  }
   if (/(chatbot|chat bot|assistant|conversational ai|ai chat)/i.test(text)) {
     return "chatbot";
   }
@@ -1137,6 +1140,117 @@ export default function RootLayout({ children }) {
   };
 }
 
+function buildPremiumCrmFiles(prompt) {
+  const brand = deriveBrandLabel(prompt) || "MNB CRM";
+  const layout = `import "./globals.css";
+export const metadata = { title: "${brand}", description: "CRM workspace for clients, leads, and sales pipeline." };
+export default function RootLayout({ children }) {
+  return <html lang="en"><body>{children}</body></html>;
+}
+`;
+  const globals = `:root{--bg:#060914;--card:#121a31;--line:rgba(255,255,255,.13);--text:#f6f8ff;--muted:#b2bfde;--accent:#7aa6ff;--ok:#7fe0a6;--warn:#ffd37f}*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif}.shell{width:min(1180px,94vw);margin:0 auto;padding:24px 0 52px}.topbar{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:12px;color:var(--muted)}.muted{color:var(--muted)}.pill{border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-size:12px;background:rgba(255,255,255,.03)}.kpi{margin-top:14px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.card{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:12px}.split{margin-top:14px;display:grid;grid-template-columns:1.2fr .8fr;gap:10px}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:8px;border-bottom:1px solid var(--line);text-align:left}.lead{display:flex;justify-content:space-between;gap:8px;padding:8px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.02)}.lead + .lead{margin-top:8px}.status-open{color:var(--warn)}.status-won{color:var(--ok)}@media(max-width:980px){.kpi{grid-template-columns:repeat(2,minmax(0,1fr))}.split{grid-template-columns:1fr}}`;
+  const types = `export type CrmClient = { id: string; name: string; segment: "Enterprise" | "SMB"; owner: string; status: "active" | "at-risk"; lastContact: string; };
+export type CrmLead = { id: string; company: string; contact: string; source: "Inbound" | "Referral" | "Outbound"; stage: "new" | "qualified" | "proposal" | "won"; value: number; };
+`;
+  const data = `import type { CrmClient, CrmLead } from "./crm-types";
+export const clients: CrmClient[] = [
+  { id: "c-001", name: "Northline Holdings", segment: "Enterprise", owner: "Alicia", status: "active", lastContact: "2026-03-01" },
+  { id: "c-002", name: "Urban Atlas", segment: "SMB", owner: "Ravi", status: "at-risk", lastContact: "2026-02-25" },
+  { id: "c-003", name: "KiteWorks", segment: "SMB", owner: "Mei", status: "active", lastContact: "2026-03-03" },
+];
+export const leads: CrmLead[] = [
+  { id: "l-101", company: "Valora Labs", contact: "sam@valora.io", source: "Inbound", stage: "qualified", value: 24000 },
+  { id: "l-102", company: "BlueMint", contact: "ops@bluemint.co", source: "Referral", stage: "proposal", value: 41000 },
+  { id: "l-103", company: "DeltaGrid", contact: "ceo@deltagrid.ai", source: "Outbound", stage: "new", value: 18000 },
+];
+`;
+  const clientTable = `import type { CrmClient } from "@/lib/crm-types";
+export function ClientTable({ rows }: { rows: CrmClient[] }) {
+  return (
+    <table className="table">
+      <thead><tr><th>Client</th><th>Segment</th><th>Owner</th><th>Status</th><th>Last Contact</th></tr></thead>
+      <tbody>
+        {rows.map((c) => (
+          <tr key={c.id}>
+            <td>{c.name}</td><td>{c.segment}</td><td>{c.owner}</td>
+            <td className={c.status === "active" ? "status-won" : "status-open"}>{c.status}</td>
+            <td>{c.lastContact}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+`;
+  const leadBoard = `import type { CrmLead } from "@/lib/crm-types";
+export function LeadBoard({ rows }: { rows: CrmLead[] }) {
+  return (
+    <div>
+      {rows.map((lead) => (
+        <article className="lead" key={lead.id}>
+          <div>
+            <strong>{lead.company}</strong>
+            <p className="muted">{lead.contact} · {lead.source}</p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div className={lead.stage === "won" ? "status-won" : "status-open"}>{lead.stage}</div>
+            <div>${"{lead.value.toLocaleString()}"}</div>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+`;
+  const page = `import { ClientTable } from "@/components/crm/ClientTable";
+import { LeadBoard } from "@/components/crm/LeadBoard";
+import { clients, leads } from "@/lib/mock-crm-data";
+
+export default function HomePage() {
+  const won = leads.filter((item) => item.stage === "won").reduce((acc, item) => acc + item.value, 0);
+  return (
+    <main className="shell">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">CRM Workspace</p>
+          <h1>${brand}</h1>
+          <p className="muted">Track clients and potential clients with pipeline visibility for MNB.</p>
+        </div>
+        <span className="pill">MNB Internal</span>
+      </header>
+      <section className="kpi">
+        <article className="card"><p className="muted">Active Clients</p><h2>{clients.length}</h2></article>
+        <article className="card"><p className="muted">Open Leads</p><h2>{leads.filter((l) => l.stage !== "won").length}</h2></article>
+        <article className="card"><p className="muted">Pipeline Value</p><h2>${"{leads.reduce((a,l)=>a+l.value,0).toLocaleString()}"}</h2></article>
+        <article className="card"><p className="muted">Closed Won</p><h2>${"{won.toLocaleString()}"}</h2></article>
+      </section>
+      <section className="split">
+        <article className="card">
+          <h3>Client Accounts</h3>
+          <ClientTable rows={clients} />
+        </article>
+        <article className="card">
+          <h3>Lead Pipeline</h3>
+          <LeadBoard rows={leads} />
+        </article>
+      </section>
+    </main>
+  );
+}
+`;
+  const preview = `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>${brand}</title><style>${globals}</style></head><body><main class="shell"><header class="topbar"><div><p class="eyebrow">CRM Workspace</p><h1>${brand}</h1><p class="muted">Track clients and potential clients with pipeline visibility for MNB.</p></div><span class="pill">MNB Internal</span></header><section class="kpi"><article class="card"><p class="muted">Active Clients</p><h2>3</h2></article><article class="card"><p class="muted">Open Leads</p><h2>3</h2></article><article class="card"><p class="muted">Pipeline Value</p><h2>$83,000</h2></article><article class="card"><p class="muted">Closed Won</p><h2>$0</h2></article></section></main></body></html>`;
+  return {
+    "src/app/layout.tsx": layout,
+    "src/app/page.tsx": page,
+    "src/app/globals.css": globals,
+    "src/lib/crm-types.ts": types,
+    "src/lib/mock-crm-data.ts": data,
+    "src/components/crm/ClientTable.tsx": clientTable,
+    "src/components/crm/LeadBoard.tsx": leadBoard,
+    "preview/index.html": preview,
+  };
+}
+
 function buildPremiumAppFiles(prompt) {
   const brand = deriveBrandLabel(prompt) || "Product App";
   const page = `const features = [
@@ -1183,6 +1297,7 @@ export default function RootLayout({ children }) {
 }
 
 function buildPremiumFilesByIntent(prompt, intent) {
+  if (intent === "crm") return buildPremiumCrmFiles(prompt);
   if (intent === "chatbot") return buildPremiumChatbotFiles(prompt);
   if (intent === "dashboard") return buildPremiumDashboardFiles(prompt);
   if (intent === "website") return buildPremiumCompanyWebsiteFiles(prompt, extractCompanyName(prompt));
@@ -1248,6 +1363,18 @@ function buildDeterministicDeveloperProof() {
 }
 
 function scoreArtifactQualityByIntent(prompt, artifact, intent) {
+  if (intent === "crm") {
+    const text = flattenArtifactText(artifact);
+    let score = 0;
+    if (/crm|client|lead|pipeline/.test(text)) score += 45;
+    if (/src\/lib\/crm-types\.ts|clienttable|leadboard/.test(text)) score += 25;
+    if (/responsive|@media|dashboard/.test(text)) score += 15;
+    const generatedFiles = artifact?.generatedFiles && typeof artifact.generatedFiles === "object"
+      ? artifact.generatedFiles
+      : {};
+    if (Object.keys(generatedFiles).length >= 6) score += 15;
+    return score;
+  }
   if (intent === "website") {
     return scoreWebsiteArtifactQuality(prompt, artifact);
   }

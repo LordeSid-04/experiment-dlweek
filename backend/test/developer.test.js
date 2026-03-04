@@ -163,6 +163,7 @@ test("brand label falls back to prompt intent tokens", () => {
 test("detects chatbot build intent", () => {
   assert.equal(__test.detectBuildIntent("build an AI chatbot for me please"), "chatbot");
   assert.equal(__test.detectBuildIntent("build a company website for MNB"), "website");
+  assert.equal(__test.detectBuildIntent("build a CRM website to track clients and leads"), "crm");
 });
 
 test("intent quality score favors chatbot artifacts for chatbot prompts", () => {
@@ -197,6 +198,11 @@ test("premium fallback builder returns intent-specific files", () => {
   const appFiles = __test.buildPremiumFilesByIntent("Build a task planner app", "app");
   assert.ok(appFiles["src/app/page.tsx"]);
   assert.ok(appFiles["src/app/globals.css"]);
+
+  const crmFiles = __test.buildPremiumFilesByIntent("Build a CRM website for MNB", "crm");
+  assert.ok(crmFiles["src/lib/crm-types.ts"]);
+  assert.ok(crmFiles["src/components/crm/ClientTable.tsx"]);
+  assert.ok(crmFiles["src/components/crm/LeadBoard.tsx"]);
 });
 
 test("premium website fallback includes richer trust and testimonial sections", () => {
