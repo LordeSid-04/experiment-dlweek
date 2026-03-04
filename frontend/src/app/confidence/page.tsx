@@ -22,17 +22,17 @@ const riskRulesByMode = {
   assist: [
     "AI suggests changes only. It cannot apply, merge, or deploy.",
     "Humans run every action.",
-    "All changes require approval.",
+    "No forced approval popups.",
   ],
   pair: [
-    "Low risk can proceed. Medium risk needs approval.",
-    "High and critical risk are blocked.",
-    "PR drafts are allowed with review checks.",
+    "Low and medium risk can proceed directly.",
+    "High risk is surfaced with warnings and rationale.",
+    "PR drafts are optional and user-controlled.",
   ],
   autopilot: [
-    "Low and medium risk can auto-run.",
-    "High risk needs approval. Critical risk is blocked.",
-    "Critical can proceed only with a justified break-glass override.",
+    "AI runs full multi-stage workflow.",
+    "Risk analysis is still shown with score and explanation.",
+    "User remains in control of final adoption.",
   ],
 } as const;
 

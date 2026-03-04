@@ -118,6 +118,8 @@ test("pipeline returns timeline with governor proof metadata", async () => {
   const result = await runPipeline({
     prompt: "Add auth guard and risk checks to API pipeline",
     actor: "test-user",
+    confidenceMode: "autopilot",
+    confidencePercent: 100,
     approvals: [
       { approverId: "alice", approvedAt: new Date().toISOString() },
       { approverId: "bob", approvedAt: new Date().toISOString() },
@@ -225,7 +227,7 @@ test("pair direct mode returns scoped fix artifact for selected function correct
   assert.ok(String(files["src/math.py"] || "").includes("** 2"));
 });
 
-test("stream pipeline emits human control requirement events", async () => {
+test("stream pipeline emits lifecycle events in direct assist mode", async () => {
   const seenEventTypes = [];
   await streamPipeline({
     prompt: "Change auth middleware and add deployment script",
@@ -243,5 +245,6 @@ test("stream pipeline emits human control requirement events", async () => {
       seenEventTypes.push(event.type);
     },
   });
-  assert.ok(seenEventTypes.includes("control_required"));
+  assert.ok(seenEventTypes.includes("run_started"));
+  assert.ok(seenEventTypes.includes("run_completed"));
 });

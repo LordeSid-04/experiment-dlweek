@@ -27,6 +27,7 @@ import {
 import { inferCodeLanguage } from "@/lib/syntax";
 import {
   buildAssistCompanionPrompt,
+  buildScopedExecutionPrompt,
   isCompanionOnlyConfidence,
 } from "@/lib/assist-companion";
 import type { RunCodeResult } from "@/lib/code-runner";
@@ -690,12 +691,18 @@ export function AIPanel({
   const handleSubmit = async () => {
     const rawPrompt = assistPrompt.trim();
     if (!rawPrompt) return;
-    const nextPrompt =
-      mode === "assist"
-        ? buildAssistCompanionPrompt({
+    const nextPrompt = mode === "assist"
+      ? buildAssistCompanionPrompt({
+          question: rawPrompt,
+          selectedFile,
+          selectedCode: selectedCodeSnippet,
+        })
+      : mode === "pair"
+        ? buildScopedExecutionPrompt({
             question: rawPrompt,
             selectedFile,
             selectedCode: selectedCodeSnippet,
+            mode: "pair",
           })
         : rawPrompt;
     if (!nextPrompt) return;
@@ -1184,6 +1191,26 @@ export function AIPanel({
                                   <pre className="max-h-44 overflow-auto rounded border border-white/10 bg-black/45 p-2 font-mono text-[11px] text-white/85">
                                     {pairPrimaryCode}
                                   </pre>
+                                  {responseSummary.assistantReply || responseSummary.rationale ? (
+                                    <div className="rounded border border-white/10 bg-black/45 p-2 text-[11px] text-white/80">
+                                      {responseSummary.assistantReply ? (
+                                        <p className="whitespace-pre-wrap">
+                                          {renderInlineRiskText(
+                                            responseSummary.assistantReply,
+                                            assistantContentFlags
+                                          )}
+                                        </p>
+                                      ) : null}
+                                      {responseSummary.rationale ? (
+                                        <p className="mt-1 whitespace-pre-wrap text-white/70">
+                                          {renderInlineRiskText(
+                                            responseSummary.rationale,
+                                            rationaleContentFlags
+                                          )}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </>
                               ) : (
                                 <div className="rounded border border-white/10 bg-black/45 p-2 text-[11px] text-white/80">

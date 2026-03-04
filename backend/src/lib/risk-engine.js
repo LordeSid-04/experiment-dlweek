@@ -129,9 +129,8 @@ function buildRiskCard({ score, findings = [], factors = {}, approvals = [] }) {
     .map((item) => `${item.filePath || "unknown"}:${item.lineNumber || 0} "${String(item.evidence || "").trim()}"`)
     .filter(Boolean);
   const requiredControls = [];
-  if (score >= 65) requiredControls.push("two-human-approvals");
-  if (score >= 85) requiredControls.push("break-glass-with-expiry");
-  if (countDistinctApprovers(approvals) === 0) requiredControls.push("human-review-required");
+  if (score >= 65) requiredControls.push("review-recommended");
+  if (score >= 85) requiredControls.push("manual-double-check-recommended");
   return {
     topDrivers,
     evidenceQuotes,

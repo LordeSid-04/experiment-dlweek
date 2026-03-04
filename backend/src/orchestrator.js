@@ -242,7 +242,7 @@ async function executePipeline({
   projectFiles = {},
   emitEvent,
 }) {
-  if (shouldUseDirectModelPath(confidencePercent)) {
+  if (shouldUseDirectModelPath(confidencePercent, confidenceMode)) {
     return runDirectAssistPath({
       prompt,
       actor,

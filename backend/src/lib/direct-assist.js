@@ -31,7 +31,10 @@ function normalizeConfidenceLevel(value) {
   return null;
 }
 
-function shouldUseDirectModelPath(confidencePercent) {
+function shouldUseDirectModelPath(confidencePercent, confidenceMode) {
+  if (confidenceMode === "assist" || confidenceMode === "pair") {
+    return true;
+  }
   const level = normalizeConfidenceLevel(confidencePercent);
   return level === 0 || level === 50;
 }
@@ -491,7 +494,15 @@ async function runDirectAssistPath({
   emitEvent,
 }) {
   const emit = toEventEmitter(emitEvent);
-  const level = normalizeConfidenceLevel(confidencePercent);
+  const normalizedLevel = normalizeConfidenceLevel(confidencePercent);
+  const level =
+    normalizedLevel === 0 || normalizedLevel === 50
+      ? normalizedLevel
+      : confidenceMode === "assist"
+        ? 0
+        : confidenceMode === "pair"
+          ? 50
+          : normalizedLevel;
   if (level !== 0 && level !== 50) {
     throw new Error("Direct assist path only supports confidence levels 0 and 50.");
   }

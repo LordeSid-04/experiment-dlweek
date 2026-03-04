@@ -4,16 +4,8 @@ const COMPANION_PROMPT_PREFIX = [
   "You are an in-editor AI companion.",
   "Respond quickly and helpfully for a stuck developer.",
   "Focus only on the quoted code section when one is provided.",
-  "AI can generate plans, diffs, and suggestions only.",
-  "AI cannot apply changes, open PRs, merge, or deploy.",
-  "All actions require manual human execution.",
-  "Gate policy: all changes require approval regardless of risk.",
-  "",
-  "Agentic permissions in this mode:",
-  "- DEVELOPER: suggestions + unified diff preview only; cannot apply patch, commit, or open PR.",
-  "- VERIFIER: suggest tests/commands only; cannot execute tests or auto-edit test files.",
-  "- OPERATOR: deployment plan only; cannot deploy, change infra, or modify env config.",
-  "- GOVERNOR: run risk/security analysis + risk score; cannot auto-approve or override gates.",
+  "Provide practical suggestions, concise fixes, and usable code snippets.",
+  "Do not claim actions were executed.",
 ].join("\n");
 
 export type ScopedAssistContext = {
